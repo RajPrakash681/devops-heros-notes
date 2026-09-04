@@ -1,0 +1,66 @@
+# Corrected version of k8s-core-objects/statefulset.yml. Two changes:
+#
+#  1. The headless Service it references is added. The original sets
+#     `serviceName: "mysql"` but no such Service exists in the repo, so the
+#     per-pod DNS names a StatefulSet exists to provide were never created.
+#
+#  2. mysql:5.7 -> mysql:8.0. The 5.7 image is published for amd64 only, so on
+#     Apple Silicon the pull fails with "no match for platform in manifest".
+#
+# Storage is also reduced from 5Gi to 1Gi - three 5Gi claims is a lot to ask of
+# a laptop, and nothing here needs the space.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  clusterIP: None          # headless: no virtual IP, DNS returns the pod IPs
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+      name: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: "mysql"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+              name: mysql
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "password"
+          resources:
+            requests:
+              memory: "384Mi"
+              cpu: "100m"
+          volumeMounts:
+            - name: mysql-persistent-storage
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-persistent-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

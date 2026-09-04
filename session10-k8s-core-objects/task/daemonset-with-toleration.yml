@@ -1,0 +1,26 @@
+# The provided k8s-core-objects/deamonset.yml lands 2 pods on a 3-node cluster,
+# because the control-plane node carries a NoSchedule taint and the manifest has
+# no toleration for it. Real node-level agents (log shippers, metrics exporters,
+# CNI) need the control plane too. This version tolerates the taint.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter-all
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter-all
+  template:
+    metadata:
+      labels:
+        app: node-exporter-all
+    spec:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter
+          ports:
+            - containerPort: 9100
