@@ -1,0 +1,5 @@
+UID          PID    PPID  C STIME TTY          TIME CMD
+root           1       0  0 19:55 ?        00:00:00 sleep infinity
+root        3115       0  0 19:59 ?        00:00:00 bash -s
+root        3122    3115  0 19:59 ?        00:00:00 bash ./task-script.sh
+root        3131    3122  0 19:59 ?        00:00:00 ps -ef
