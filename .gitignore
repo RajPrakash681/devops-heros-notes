@@ -20,6 +20,8 @@ venv/
 
 # Capture tooling scratch output
 tools/*.json
+!tools/package.json
+!tools/package-lock.json
 tools/node_modules/
 
 # Env / secrets - never commit these

@@ -1,0 +1,9 @@
+{
+  "name": "devops-heros-shot-tools",
+  "private": true,
+  "type": "module",
+  "description": "Playwright helpers for capturing real terminal output and browser screenshots.",
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}

@@ -46,15 +46,16 @@ cat > spec.json <<'EOF'
   {
     "title": "Session 2 Task 1 - hard links vs soft links",
     "out": "../session2-linux/task/screenshots/task1-links.png",
-    "shell": "wsl",
-    "cwd": "$HOME/session2-linux-task",
-    "setup": "rm -rf $HOME/session2-linux-task && mkdir -p $HOME/session2-linux-task && cd $HOME/session2-linux-task && echo hello > file1.txt && ln file1.txt hardlink.txt && ln -s file1.txt softlink.txt",
+    "shell": "docker",
+    "container": "linux-lab",
+    "cwd": "/root/session2-task",
+    "setup": "rm -rf /root/session2-task && mkdir -p /root/session2-task && cd /root/session2-task && echo hello > file1.txt && ln file1.txt hardlink.txt && ln -s file1.txt softlink.txt",
     "cmds": ["ls -li", "stat -c '%n inode=%i links=%h' file1.txt hardlink.txt softlink.txt"]
   }
 ]
 EOF
 
-python capture.py spec.json jobs.json
+python3 capture.py spec.json jobs.json
 node shoot-term.mjs jobs.json
 ```
 
@@ -64,11 +65,29 @@ Per job:
 |---|---|
 | `title` | Shown in the window title bar |
 | `out` | Where the PNG goes |
-| `shell` | `"wsl"` to run in WSL, omit to run in Git Bash on Windows |
-| `wsl_user` | `"root"` for commands needing root (WSL gives root with no password) |
+| `shell` | Which machine to run on — see the table below. Defaults to `local` on macOS/Linux, `win` on Windows |
+| `container` | Required when `shell` is `"docker"` — the container to `docker exec` into |
+| `user` | Run as this user (`docker`); `wsl_user` is the WSL equivalent |
 | `cwd` | Working directory |
 | `setup` | Runs first, output discarded — use it for scaffolding you do not want pictured |
 | `cmds` | One entry per command; each is captured and displayed with its output |
+
+### Backends
+
+| `shell` | Runs on | Use it for |
+|---|---|---|
+| `"local"` | this machine, via bash | anything your host can do — git, docker, kubectl |
+| `"docker"` | inside a running container | Linux-only commands when your host is macOS or Windows |
+| `"wsl"` | WSL Ubuntu | the same, on Windows |
+| `"win"` | Git Bash | Windows-native commands |
+
+On macOS the Linux sessions ran against a long-lived container started once with
+`docker run -d --name linux-lab ubuntu:24.04 sleep infinity`, so state persists between
+captures.
+
+Every backend exports `TERM=dumb PAGER=cat CLICOLOR=0` and a fixed width before running your
+commands, so a capture does not depend on the operator's shell setup and no escape codes end
+up in the PNG.
 
 Environment overrides: `CAPTURE_PATH` to change the PATH commands run with, `WSL_USER` to
 change the default WSL user.
