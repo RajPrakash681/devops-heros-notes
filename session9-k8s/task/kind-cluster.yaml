@@ -1,0 +1,10 @@
+# Three-node cluster: one control plane, two workers.
+# Two workers matter for session 10 - a DaemonSet on a single-node cluster
+# creates one pod, which does not demonstrate anything.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: devops-heros
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
