@@ -1,0 +1,7 @@
+# Normalise line endings to LF in the repository.
+# Without this, git on Windows commits CRLF and a checked-out .sh script
+# fails on Linux with "bad interpreter: /usr/bin/env bash^M".
+* text=auto eol=lf
+
+*.png binary
+*.pdf binary

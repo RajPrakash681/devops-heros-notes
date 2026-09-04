@@ -1,0 +1,29 @@
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Capture tooling scratch output
+tools/*.json
+tools/node_modules/
+
+# Env / secrets - never commit these
+.env
+.env.*
+*.pem
+*.key
