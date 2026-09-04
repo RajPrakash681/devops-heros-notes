@@ -1,0 +1,14 @@
+# Single-stage version, kept only to measure what the multi-stage build saves.
+# node_modules and the whole Node runtime end up in the shipped image.
+FROM node:22-alpine
+
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY index.html vite.config.js ./
+COPY src ./src
+RUN npm run build
+
+RUN npm install -g serve
+EXPOSE 80
+CMD ["serve", "-s", "dist", "-l", "80"]

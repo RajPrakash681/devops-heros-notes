@@ -1,0 +1,10 @@
+# Single-stage equivalent of the provided Dockerfile, kept only to measure what
+# the two-stage version saves. Everything npm install pulls in - including the
+# dev dependency tree - stays in the final image.
+FROM node:24-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]

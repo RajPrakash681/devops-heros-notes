@@ -1,0 +1,10 @@
+# Single-stage version, kept only to measure what the multi-stage build saves.
+# Compiles and runs in the same image, so the JDK ships to production.
+FROM eclipse-temurin:21-jdk
+
+WORKDIR /app
+COPY HelloWorldServer.java ./
+RUN javac -d . HelloWorldServer.java
+
+EXPOSE 8000
+CMD ["java", "HelloWorldServer"]
