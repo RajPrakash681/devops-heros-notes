@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fail-4-dns-failure-pod
+  labels: {tier: triage-gauntlet, scenario: dns-failure}
+spec:
+  containers:
+    - name: client
+      image: curlimages/curl:8.6.0
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "Attempting connection to internal database...";
+          getent hosts postgres-db.production.svc.cluster.local;
+          curl -sv --connect-timeout 3 http://postgres-db.production.svc.cluster.local:5432 2>&1 | grep -E 'Connected|Empty reply' || true
+          echo "Process sleeping...";
+          sleep 3600

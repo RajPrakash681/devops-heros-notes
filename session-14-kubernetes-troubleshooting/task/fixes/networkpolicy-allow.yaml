@@ -1,0 +1,16 @@
+# The fix: keep the default deny, and explicitly allow pods labelled
+# access=web (policies are additive - any matching allow wins).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-allow-labelled-clients
+spec:
+  podSelector:
+    matchLabels: {app: web}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {access: web}
+      ports:
+        - port: 80

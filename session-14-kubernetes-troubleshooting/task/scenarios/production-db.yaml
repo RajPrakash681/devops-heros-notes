@@ -1,0 +1,31 @@
+# What scenario 4's client is actually supposed to reach: postgres-db in the
+# production namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-db
+  namespace: production
+  labels: {app: postgres-db}
+spec:
+  containers:
+    - name: postgres
+      image: postgres:16-alpine
+      env:
+        - {name: POSTGRES_PASSWORD, value: lab-only}
+      ports:
+        - containerPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db
+  namespace: production
+spec:
+  selector: {app: postgres-db}
+  ports:
+    - port: 5432

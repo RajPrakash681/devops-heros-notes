@@ -1,0 +1,25 @@
+# Configuration issue: an env var from a ConfigMap key that is missing.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-settings
+data:
+  LOG_LEVEL: info
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fail-7-config-pod
+  labels: {tier: triage-gauntlet, scenario: config}
+spec:
+  containers:
+    - name: app
+      image: busybox:1.36
+      command: ["sh", "-c", "echo LOG_LEVEL=$LOG_LEVEL API_URL=$API_URL; sleep 3600"]
+      env:
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef: {name: app-settings, key: LOG_LEVEL}
+        - name: API_URL
+          valueFrom:
+            configMapKeyRef: {name: app-settings, key: API_URL}

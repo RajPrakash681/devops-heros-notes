@@ -1,0 +1,24 @@
+# Scenario 5 fixed: a limit above what the job needs (100 x 10 MiB), and
+# restartPolicy Never because this is a run-to-completion task, not a service.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fail-5-oomkilled-pod
+  labels: {tier: triage-gauntlet, scenario: oomkilled}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: memory-leaker
+      image: python:3.11-alpine
+      command:
+        - "python3"
+        - "-c"
+        - |
+          print("Allocating memory rapidly...")
+          chunks = []
+          for i in range(100):
+              chunks.append(b"x" * (10 * 1024 * 1024))
+          print(f"allocated {len(chunks) * 10} MiB - done")
+      resources:
+        limits:
+          memory: "1200Mi"
