@@ -1,4 +1,4 @@
 # The only file a deploy changes: bump both tags to the commit the pipeline pushed.
 backend: {tag: "35788bf"}
-frontend: {tag: "35788bf"}
+frontend: {tag: "35788bf", replicas: 3}
 config: {appEnv: gitops}
