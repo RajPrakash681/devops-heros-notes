@@ -1,0 +1,13 @@
+# Provider binaries and module cache - recreated by `terraform init`
+.terraform/
+
+# State holds real resource IDs (and can hold secrets) - never commit it
+*.tfstate
+*.tfstate.*
+
+# Saved plans and crash logs
+*.tfplan
+crash.log
+
+# terraform.tfvars is deliberately NOT ignored: it holds no secrets and is part of the
+# task. In a real project with sensitive values it would be.
