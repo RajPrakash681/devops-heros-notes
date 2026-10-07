@@ -11,9 +11,16 @@
 
 ## What the task asked
 
-Build the Express app in [`../multi-stage-dockerfile/`](../multi-stage-dockerfile/) using
-its multi-stage Dockerfile, run it with host port **8080** mapped to container port **3000**,
-and verify the output in the browser and with `docker ps`.
+Session 7 (Dockerfiles & Images) has three tasks:
+
+1. **Run the multi-stage Dockerfile** — build the Express app in
+   [`../multi-stage-dockerfile/`](../multi-stage-dockerfile/) with its multi-stage
+   Dockerfile, run it with host port **8080** mapped to container port **3000**, and verify
+   *Hello World from Docker multi-stage build* in the browser and the container in `docker ps`.
+2. **Documentation** — this file: name, enrollment number, and output/screenshots of the app
+   running and of `docker ps` showing port 8080.
+3. **Deploy at least 3 different types of applications with Docker** (Node.js, Python, Java)
+   — see [Task 3](#task-3-three-different-application-types) below.
 
 ## Steps
 
@@ -163,6 +170,58 @@ That is a small leak here. In a real project the same `COPY . .` would pull in `
 credentials in its history. So the multi-stage version is meaningfully *cleaner* even where
 it is barely *smaller*, and the fix for the single-stage version is a `.dockerignore`, not
 another stage.
+
+---
+
+## Task 3: Three different application types
+
+I deployed this as part of the session 6 work, which asked for six runtimes in one go — so
+Task 3 is covered by real builds and runs in [`../task/`](../task/README.md), not repeated
+here. The three the task names, plus the other three:
+
+| Folder | Runtime | Base image(s) | Container port | Host port | Image size |
+|---|---|---|---|---|---|
+| [`nodejs-app/`](../task/nodejs-app/) | **Node.js** + Express | `node:22-alpine` | 3000 | 3001 | 248 MB |
+| [`python-app/`](../task/python-app/) | **Python** + Flask | `python:3.12-slim` | 5000 | 3002 | 234 MB |
+| [`java-app/`](../task/java-app/) | **Java** (JDK `HttpServer`) | `eclipse-temurin:21-jdk` → `21-jre` | 8000 | 3003 | 474 MB |
+| [`Apache-app/`](../task/Apache-app/) | Apache httpd | `httpd:2.4-alpine` | 80 | 3004 | 105 MB |
+| [`React-app/`](../task/React-app/) | React (Vite) | `node:22-alpine` → `nginx:alpine` | 80 | 3005 | 102 MB |
+| [`nginx-app/`](../task/nginx-app/) | Nginx | `nginx:alpine` | 80 | 3006 | 102 MB |
+
+All six were running at once and answered over HTTP — from the
+[session 6 verification](../task/README.md#verification):
+
+![docker ps and image sizes](../task/screenshots/terminal-docker-ps.png)
+
+```text
+$ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+NAMES        IMAGE          STATUS         PORTS
+nginx-app    hello-nginx    Up 2 minutes   0.0.0.0:3006->80/tcp, [::]:3006->80/tcp
+react-app    hello-react    Up 2 minutes   0.0.0.0:3005->80/tcp, [::]:3005->80/tcp
+apache-app   hello-apache   Up 2 minutes   0.0.0.0:3004->80/tcp, [::]:3004->80/tcp
+java-app     hello-java     Up 2 minutes   0.0.0.0:3003->8000/tcp, [::]:3003->8000/tcp
+python-app   hello-python   Up 2 minutes   0.0.0.0:3002->5000/tcp, [::]:3002->5000/tcp
+nodejs-app   hello-nodejs   Up 2 minutes   0.0.0.0:3001->3000/tcp, [::]:3001->3000/tcp
+
+$ for p in 3001 3002 3003 3004 3005 3006; do curl -s -o /dev/null -w 'HTTP %{http_code}  %{size_download} bytes\n' http://localhost:$p; done
+localhost:3001 -> HTTP 200  620 bytes
+localhost:3002 -> HTTP 200  598 bytes
+localhost:3003 -> HTTP 200  596 bytes
+localhost:3004 -> HTTP 200  479 bytes
+localhost:3005 -> HTTP 200  325 bytes
+localhost:3006 -> HTTP 200  473 bytes
+```
+
+The Node.js, Python and Java pages, each served from its own container:
+
+| Node.js — `localhost:3001` | Python — `localhost:3002` | Java — `localhost:3003` |
+|---|---|---|
+| ![Node.js](../task/screenshots/nodejs-app.png) | ![Python](../task/screenshots/python-app.png) | ![Java](../task/screenshots/java-app.png) |
+
+The three runtimes package very differently, which is the useful comparison for this session:
+Node and Python ship an interpreter plus dependencies in one stage, while Java uses a
+multi-stage build — compile with the full JDK, then copy only the compiled classes onto a
+JRE image, which is why its Dockerfile has two `FROM` lines.
 
 ---
 
