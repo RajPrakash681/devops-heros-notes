@@ -1,0 +1,22 @@
+# Applied once by hand (kubectl apply -f). Deliberately OUTSIDE the synced path app/,
+# so Argo CD never tries to manage the object that configures Argo CD itself.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: s20-gitops-web
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/RajPrakash681/devops-heros-notes.git
+    targetRevision: main
+    path: session20-monitoring-observability-gitops/task/gitops/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gitops-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

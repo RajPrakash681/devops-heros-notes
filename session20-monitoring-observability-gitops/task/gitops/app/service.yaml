@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: s20-gitops-web
+spec:
+  selector:
+    app: s20-gitops-web
+  ports:
+    - port: 80
+      targetPort: 80
