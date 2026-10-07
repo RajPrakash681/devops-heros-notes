@@ -1,0 +1,5 @@
+# Bandit (SAST) configuration.
+# The gate fails on MEDIUM-or-higher severity at MEDIUM-or-higher confidence
+# (set on the command line in the workflow). Everything is still reported.
+exclude_dirs:
+  - tests

@@ -1,0 +1,355 @@
+# Session 17 - Complete CI/CD + DevSecOps.
+# Source: session-17-devsecops/task/  Write-up: session-17-devsecops/task/README.md
+#
+#   1 build & unit test ─┬─► 2 SAST (Bandit gate + CodeQL) ──┐
+#                        ├─► 3 SCA (pip-audit) ──────────────┤
+#                        ├─► 4 secret scan (gitleaks) ───────┼─► 7 SECURITY GATE ─► 8 push (GHCR) ─► 9 deploy (k8s)
+#                        └─► 5 docker build ─► 6 image scan ─┘        (all must pass)      main only
+#
+# The scanners run in parallel and every one of them always reports. The single
+# decision point is job 7: it runs even when a scanner failed, prints what
+# failed, and only a fully green gate lets the image reach the registry.
+# The image that is pushed is the exact tarball that was scanned (built once).
+name: Session 17 - DevSecOps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "session-17-devsecops/task/**"
+      - ".github/workflows/session17-devsecops.yml"
+  pull_request:
+    paths:
+      - "session-17-devsecops/task/**"
+      - ".github/workflows/session17-devsecops.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: session17-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_DIR: session-17-devsecops/task
+  TRIVY_VERSION: "0.75.0"
+  GITLEAKS_VERSION: "8.30.1"
+
+jobs:
+  build-test:
+    name: 1. Build & unit test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: session-17-devsecops/task
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Build (install dependencies, byte-compile)
+        run: |
+          pip install -r requirements-dev.txt
+          python -m compileall -q app && echo "compiled OK"
+      - name: Unit tests
+        run: python -m pytest -v --cov=app --cov-report=term-missing --junitxml=reports/junit.xml
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-unit-tests
+          path: ${{ env.APP_DIR }}/reports/
+
+  sast:
+    name: 2. SAST (Bandit + CodeQL)
+    needs: build-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload findings to the repo's Security tab
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: CodeQL - init
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+          config: |
+            paths:
+              - session-17-devsecops/task/app
+      - name: CodeQL - analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: session17-codeql
+      - name: Install Bandit
+        run: pip install "bandit[sarif]==1.9.4"
+      - name: Bandit - full report (every severity)
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          mkdir -p reports
+          bandit -c security/bandit.yaml -r app -f sarif -o reports/bandit.sarif --exit-zero
+          bandit -c security/bandit.yaml -r app --exit-zero
+      - name: Upload Bandit findings to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ env.APP_DIR }}/reports/bandit.sarif
+          category: session17-bandit
+      - name: Bandit - GATE (fail on medium+ severity, medium+ confidence)
+        working-directory: ${{ env.APP_DIR }}
+        run: bandit -c security/bandit.yaml -r app --severity-level medium --confidence-level medium -q
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-sast
+          path: ${{ env.APP_DIR }}/reports/
+
+  sca:
+    name: 3. SCA (pip-audit)
+    needs: build-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: session-17-devsecops/task
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install pip-audit==2.10.1
+      - name: Dependency tree being audited
+        run: |
+          python -m venv /tmp/resolve && /tmp/resolve/bin/pip install -q -r requirements.txt
+          /tmp/resolve/bin/pip list --format=freeze
+      - name: pip-audit - GATE (fail on any known vulnerability)
+        run: |
+          mkdir -p reports
+          pip-audit -r requirements.txt --desc on -f json -o reports/pip-audit.json || true
+          pip-audit -r requirements.txt --desc on --strict
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-sca
+          path: ${{ env.APP_DIR }}/reports/
+
+  secret-scan:
+    name: 4. Secret scan (gitleaks)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0       # the whole history, not just the last commit
+      - name: Install gitleaks (pinned, checksum verified)
+        run: |
+          v=$GITLEAKS_VERSION; cd /tmp
+          curl -sSLO "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz"
+          curl -sSLO "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_checksums.txt"
+          grep "gitleaks_${v}_linux_x64.tar.gz" "gitleaks_${v}_checksums.txt" | sha256sum -c -
+          tar xzf "gitleaks_${v}_linux_x64.tar.gz" gitleaks && sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+      - name: Prove the scanner works (planted token must be caught)
+        run: |
+          tmp=$(mktemp -d)
+          # A token-shaped value generated at run time - never committed anywhere.
+          fake="ghp_$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 36)"
+          echo "GITHUB_TOKEN=$fake" > "$tmp/settings.env"
+          if gitleaks dir "$tmp" --no-banner --redact; then
+            echo "::error::gitleaks did NOT flag a planted token - a green scan would mean nothing"
+            exit 1
+          fi
+          echo "OK - planted token was caught, so a clean result below is meaningful"
+      - name: Scan working tree - GATE
+        run: |
+          mkdir -p reports
+          gitleaks dir "$APP_DIR" -c "$APP_DIR/security/.gitleaks.toml" --no-banner --redact -v \
+            --report-format json --report-path reports/gitleaks-dir.json
+      - name: Scan git history of the project - GATE
+        run: |
+          gitleaks git . -c "$APP_DIR/security/.gitleaks.toml" --no-banner --redact -v \
+            --log-opts="-- $APP_DIR" --report-format json --report-path reports/gitleaks-git.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-secrets
+          path: reports/
+
+  docker-build:
+    name: 5. Docker build
+    needs: build-test
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: meta
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "image=ghcr.io/${repo}/session17-devsecops-dashboard" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.APP_DIR }}
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+      - name: Save the image - this exact tarball is what gets scanned and pushed
+        run: |
+          IMG=${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          docker image ls "$IMG"
+          docker inspect --format 'user="{{.Config.User}}" cmd={{json .Config.Cmd}}' "$IMG"
+          mkdir -p dist && docker save "$IMG" -o dist/image.tar
+          sha256sum dist/image.tar | tee dist/image.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: dist/
+          retention-days: 3
+
+  image-scan:
+    name: 6. Image scan (Trivy)
+    needs: docker-build
+    runs-on: ubuntu-latest
+    env:
+      # Fall back to the ECR mirror if ghcr.io rate-limits the vulnerability DB download.
+      TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+          path: dist
+      - name: Verify it is the same tarball that was built
+        run: sha256sum -c dist/image.sha256
+      - name: Install Trivy (pinned, checksum verified)
+        run: |
+          v=$TRIVY_VERSION; cd /tmp
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${v}/trivy_${v}_Linux-64bit.tar.gz"
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${v}/trivy_${v}_checksums.txt"
+          grep "trivy_${v}_Linux-64bit.tar.gz" "trivy_${v}_checksums.txt" | sha256sum -c -
+          tar xzf "trivy_${v}_Linux-64bit.tar.gz" trivy && sudo mv trivy /usr/local/bin/
+          trivy --version
+      - name: SBOM (CycloneDX)
+        run: |
+          mkdir -p reports
+          trivy image --input dist/image.tar --format cyclonedx -o reports/sbom.cdx.json --quiet
+          echo "components in SBOM: $(jq '.components | length' reports/sbom.cdx.json)"
+      - name: Full report (HIGH/CRITICAL, fixed or not)
+        run: trivy image --input dist/image.tar --severity HIGH,CRITICAL --exit-code 0 --quiet
+      - name: Trivy - GATE (fail on fixable HIGH/CRITICAL)
+        run: |
+          trivy image --input dist/image.tar --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile "$APP_DIR/security/.trivyignore" --exit-code 1 --quiet \
+            --format json -o reports/trivy.json || failed=1
+          trivy convert --format table reports/trivy.json
+          exit ${failed:-0}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: report-image-scan
+          path: reports/
+
+  security-gate:
+    name: 7. Security gate
+    needs: [build-test, sast, sca, secret-scan, docker-build, image-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate every check
+        run: |
+          fail=0
+          row() {
+            if [ "$2" = "success" ]; then mark="PASS"; else mark="FAIL"; fail=1; fi
+            printf '| %-26s | %-8s | %s |\n' "$1" "$2" "$mark"
+          }
+          {
+            echo "## Security gate"
+            echo
+            echo "| Check                      | Result   | Gate |"
+            echo "|----------------------------|----------|------|"
+            row "Build & unit tests"       "${{ needs.build-test.result }}"
+            row "SAST (Bandit/CodeQL)"     "${{ needs.sast.result }}"
+            row "SCA (pip-audit)"          "${{ needs.sca.result }}"
+            row "Secret scan (gitleaks)"   "${{ needs.secret-scan.result }}"
+            row "Docker build"             "${{ needs.docker-build.result }}"
+            row "Image scan (Trivy)"       "${{ needs.image-scan.result }}"
+          } > summary.md
+          if [ $fail = 0 ]; then echo -e "\n**OPEN** - image may be pushed and deployed." >> summary.md
+          else echo -e "\n**CLOSED** - nothing is pushed or deployed." >> summary.md; fi
+          cat summary.md | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+  push:
+    name: 8. Push image (GHCR)
+    needs: [docker-build, security-gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+          path: dist
+      - name: Load the scanned image
+        run: sha256sum -c dist/image.sha256 && docker load -i dist/image.tar
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push
+        run: |
+          IMG=${{ needs.docker-build.outputs.image }}
+          TAG=${{ needs.docker-build.outputs.tag }}
+          docker tag "$IMG:$TAG" "$IMG:latest"
+          docker push "$IMG:$TAG"
+          docker push "$IMG:latest"
+          docker inspect --format '{{index .RepoDigests 0}}' "$IMG:$TAG"
+
+  deploy:
+    name: 9. Deploy to Kubernetes
+    needs: [docker-build, push]
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: staging
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull from GHCR into the cluster
+        run: |
+          IMG=${{ needs.docker-build.outputs.image }}:${{ needs.docker-build.outputs.tag }}
+          docker pull "$IMG" && kind load docker-image "$IMG" --name staging
+      - name: Deploy
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          IMG=${{ needs.docker-build.outputs.image }}:${{ needs.docker-build.outputs.tag }}
+          sed "s|IMAGE_PLACEHOLDER|$IMG|" k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/devsecops-dashboard --timeout=120s
+          kubectl get deploy,pods,svc -l app=devsecops-dashboard -o wide
+      - name: Smoke test + runtime security checks
+        run: |
+          kubectl port-forward svc/devsecops-dashboard 8080:80 >/dev/null 2>&1 &
+          for i in $(seq 1 20); do curl -fs localhost:8080/health && break; sleep 1; done
+          echo; curl -fs localhost:8080/api/status; echo
+          POD=$(kubectl get pod -l app=devsecops-dashboard -o jsonpath='{.items[0].metadata.name}')
+          echo "--- inside $POD"
+          kubectl exec "$POD" -- id
+          kubectl exec "$POD" -- sh -c 'touch /app/x 2>&1 || true'

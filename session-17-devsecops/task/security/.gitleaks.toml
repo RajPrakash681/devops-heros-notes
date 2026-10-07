@@ -1,0 +1,4 @@
+# Gitleaks (secret scanning) configuration: the full default rule set,
+# nothing switched off.
+[extend]
+useDefault = true

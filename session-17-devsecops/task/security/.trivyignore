@@ -1,0 +1,3 @@
+# Trivy (image scanning) accepted-risk list. One CVE ID per line, each with a
+# comment saying why it is accepted and until when. Currently empty: nothing
+# is waived, so every fixable HIGH/CRITICAL finding fails the gate.
