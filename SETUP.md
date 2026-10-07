@@ -39,6 +39,10 @@ submission.
 | 2, 3, 4, 5 | A Linux shell. On Windows: `wsl --install -d Ubuntu`. |
 | 6–7, 8 | Docker (Docker Desktop on Windows/macOS, or Docker Engine on Linux). |
 | 9, 10 | A local Kubernetes cluster: `minikube start --driver=docker`, or `kind`. |
+| 11–15 | The kind cluster in [`session-11-kubernetes-services/task/kind-cluster.yaml`](session-11-kubernetes-services/task/kind-cluster.yaml) plus [`cluster-setup.sh`](session-11-kubernetes-services/task/cluster-setup.sh) (metrics-server, MetalLB, ingress-nginx); Helm 3 for session 15. |
+| 16, 17, 21 | Nothing local — the pipelines run on GitHub Actions from [`.github/workflows/`](.github/workflows/). |
+| 18, 19 | Terraform ≥ 1.6. Without AWS credentials, a local AWS API emulator (moto in Docker) — see each task README. |
+| 20 | Docker Compose (Prometheus, Grafana) and the kind cluster (Argo CD). |
 
 Some sessions need tools that are not installed by default. On Ubuntu, session 4 needs:
 
