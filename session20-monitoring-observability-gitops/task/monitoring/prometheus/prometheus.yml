@@ -1,0 +1,49 @@
+# Extends ../../03-prometheus/prometheus.yml: same global interval and self-scrape job,
+# plus the exporters and the app, rule files, and an Alertmanager to send alerts to.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # host metrics: CPU, memory, disk, network of the machine the containers run on
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # per-container CPU and memory
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metric_relabel_configs:
+      # keep the whole-VM cgroup "/" and one series per top-level Docker container;
+      # drop the nested cgroups of the kind nodes' own pods (hundreds of series)
+      - source_labels: [id]
+        regex: "/|/docker/[0-9a-f]{64}"
+        action: keep
+      # cAdvisor cannot name containers here (see docker-compose.yml), so expose the short
+      # Docker ID - the same 12 characters `docker ps` prints
+      - source_labels: [id]
+        regex: "/docker/([0-9a-f]{12}).*"
+        target_label: container_id
+        replacement: "$1"
+
+  # application metrics: requests, latency, process CPU/memory, health flag
+  - job_name: orders-api
+    static_configs:
+      - targets: ["orders-api:8000"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

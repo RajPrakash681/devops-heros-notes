@@ -1,0 +1,134 @@
+# Session 20 monitoring + observability stack.
+# Builds on ../../04-grafana/docker-compose.yml (same Prometheus and Grafana versions) and adds:
+#   - node-exporter (host metrics), cAdvisor (container metrics)
+#   - orders-api (demo app: /metrics, JSON logs, OTel traces, /health) + a load generator
+#   - Alertmanager + alert-sink (where alert notifications are delivered)
+#   - Jaeger (trace storage + UI)
+#   - Grafana datasource and dashboard provisioned from files, no clicking
+# Every service has a memory limit: this runs next to a kind cluster on an 8 GB Docker VM.
+name: s20-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: s20-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2h
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    mem_limit: 300m
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    container_name: s20-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    mem_limit: 64m
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: s20-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # read-only anonymous access so the dashboard can be viewed (and screenshotted)
+      # without a login; Viewer cannot edit anything. Lab only.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/session20-overview.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: s20-node-exporter
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    mem_limit: 64m
+
+  # cAdvisor on Docker Desktop (Apple Silicon) needed two workarounds - see task/README.md:
+  #  1. The usual recipe mounts the whole /var/run directory. On Docker Desktop for Mac that is
+  #     the *Mac's* /var/run (under the shared /private tree): no docker.sock in it.
+  #  2. With the socket mounted, the Docker handler registers but cannot read any container,
+  #     because this engine uses the containerd image store and the layerdb directory cAdvisor
+  #     reads does not exist (same on v0.52.1 and v0.53.0).
+  # So the Docker socket is deliberately NOT mounted. cAdvisor falls back to its raw cgroup
+  # handler, which still measures every /docker/<id> cgroup - it just cannot name them.
+  # Prometheus relabels the cgroup path into a short container_id (see prometheus.yml).
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.53.0
+    container_name: s20-cadvisor
+    command:
+      - --docker_only=true
+      - --raw_cgroup_prefix_whitelist=/docker/
+      - --housekeeping_interval=10s
+      - --store_container_labels=false
+      - --disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,process,referenced_memory,resctrl,sched,tcp,udp,percpu,disk,diskIO
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    mem_limit: 200m
+
+  orders-api:
+    build: ./app
+    image: s20-orders-api:1.0
+    container_name: s20-orders-api
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_NAME: orders-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    depends_on:
+      - jaeger
+    mem_limit: 128m
+
+  alert-sink:
+    image: s20-orders-api:1.0
+    container_name: s20-alert-sink
+    environment:
+      SERVICE_NAME: alert-sink
+    depends_on:
+      - orders-api   # so the image is built first
+    mem_limit: 96m
+
+  loadgen:
+    image: busybox:1.36
+    container_name: s20-loadgen
+    command: ["sh", "-c", "while true; do wget -q -O /dev/null http://orders-api:8000/order 2>/dev/null; sleep 0.3; done"]
+    depends_on:
+      - orders-api
+    mem_limit: 16m
+
+  jaeger:
+    image: jaegertracing/jaeger:2.10.0
+    container_name: s20-jaeger
+    ports:
+      - "16686:16686"   # UI + query API
+    mem_limit: 256m

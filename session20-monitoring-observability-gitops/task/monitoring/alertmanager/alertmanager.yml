@@ -1,0 +1,16 @@
+# Prometheus decides WHEN an alert fires; Alertmanager decides WHO hears about it.
+# The receiver is a second copy of the demo app (alert-sink) that logs every webhook it
+# gets - a stand-in for Slack/PagerDuty/email. It is deliberately NOT orders-api itself:
+# an InstanceDown alert about orders-api could never be delivered to orders-api.
+route:
+  receiver: alert-sink
+  group_by: ["alertname"]
+  group_wait: 5s
+  group_interval: 10s
+  repeat_interval: 1h
+
+receivers:
+  - name: alert-sink
+    webhook_configs:
+      - url: http://alert-sink:8000/alerts
+        send_resolved: true

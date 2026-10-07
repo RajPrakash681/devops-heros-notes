@@ -1,0 +1,60 @@
+# Thresholds and `for:` windows are short so the demo fires within a minute.
+# In production `for:` is usually 2-10m so a single slow scrape does not page anyone.
+groups:
+  - name: session20-availability
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} ({{ $labels.instance }}) is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for more than 15s."
+
+      - alert: AppUnhealthy
+        expr: app_healthy == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} reports itself unhealthy (/health returns 503)"
+
+  - name: session20-resources
+    rules:
+      - alert: NodeHighCPU
+        expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m]))) > 80
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node CPU utilisation is {{ $value | printf \"%.1f\" }}%"
+
+      - alert: NodeHighMemory
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node memory utilisation is {{ $value | printf \"%.1f\" }}%"
+
+      - alert: AppHighCPU
+        expr: rate(process_cpu_seconds_total{job="orders-api"}[30s]) > 0.8
+        for: 20s
+        labels:
+          severity: warning
+        annotations:
+          summary: "orders-api is using {{ $value | printf \"%.2f\" }} CPU cores"
+
+  - name: session20-errors
+    rules:
+      - alert: AppHighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="orders-api", path="/order", status=~"5.."}[1m]))
+            /
+          sum(rate(http_requests_total{job="orders-api", path="/order"}[1m])) > 0.20
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of /order requests are failing"
