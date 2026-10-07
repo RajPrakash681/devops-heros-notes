@@ -4,13 +4,16 @@ import datetime
 import sys
 import os
 import random
-import math
 
 app = Flask(__name__)
 
 # --- In-memory storage for demo ---
 _request_count = 0
-_start_time = datetime.datetime.utcnow()
+_start_time = datetime.datetime.now(datetime.timezone.utc)
+
+
+def _utc_now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _increment_requests():
@@ -35,18 +38,18 @@ def home():
 @app.route("/health")
 def health():
     _increment_requests()
-    uptime_seconds = (datetime.datetime.utcnow() - _start_time).total_seconds()
+    uptime_seconds = (datetime.datetime.now(datetime.timezone.utc) - _start_time).total_seconds()
     return jsonify({
         "status": "healthy",
         "uptime_seconds": round(uptime_seconds, 2),
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": _utc_now_iso(),
     })
 
 
 @app.route("/api/status")
 def status():
     _increment_requests()
-    uptime = datetime.datetime.utcnow() - _start_time
+    uptime = datetime.datetime.now(datetime.timezone.utc) - _start_time
     hours, remainder = divmod(int(uptime.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
     return jsonify({
@@ -57,7 +60,7 @@ def status():
         "platform": platform.system(),
         "uptime": f"{hours:02d}h {minutes:02d}m {seconds:02d}s",
         "total_requests": _request_count,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": _utc_now_iso(),
     })
 
 
@@ -78,7 +81,7 @@ def greet(name):
     return jsonify({
         "message": random.choice(greetings),
         "name": name,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": _utc_now_iso(),
     })
 
 
@@ -212,7 +215,7 @@ def run_pipeline():
         "overall_status": overall,
         "total_time_s": total_time,
         "stages": stages,
-        "triggered_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "triggered_at": _utc_now_iso(),
     })
 
 
@@ -231,4 +234,12 @@ def server_error(e):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    # Local development only. In the container gunicorn serves the app (see the
+    # Dockerfile), so this block never runs there. Debug mode is opt-in and the
+    # default bind is loopback: the Werkzeug debugger executes arbitrary Python
+    # for anyone who can reach it.
+    app.run(
+        host=os.environ.get("APP_HOST", "127.0.0.1"),
+        port=int(os.environ.get("APP_PORT", "5001")),
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+    )
