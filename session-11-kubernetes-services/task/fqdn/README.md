@@ -1,7 +1,7 @@
 # Session 11 — Task 3: FQDN in Kubernetes
 
 - **Name:** Raj Prakash
-- **Enrollment No:** 2024EB02289
+- **Enrollment No:** 24BCS10328
 
 Back to the [session 11 task index](../README.md). All output below is from my kind cluster
 (Kubernetes v1.34.0, CoreDNS v1.12.1).

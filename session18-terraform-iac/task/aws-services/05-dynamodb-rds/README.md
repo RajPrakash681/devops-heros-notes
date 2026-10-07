@@ -1,7 +1,7 @@
 # Session 18 — AWS Services — 05: DynamoDB & RDS (Database)
 
 - **Name:** Raj Prakash
-- **Enrollment No:** 2024EB02289
+- **Enrollment No:** 24BCS10328
 
 ---
 

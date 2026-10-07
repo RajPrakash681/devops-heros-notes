@@ -1,7 +1,7 @@
 # Session 10 — Kubernetes Core Objects — Task
 
 - **Name:** Raj Prakash
-- **Enrollment No:** _(your enrollment number)_
+- **Enrollment No:** 24BCS10328
 
 > **Status:** done
 >

@@ -1,6 +1,6 @@
 # Terraform S3 demo (Session 18, Task 1)
 
-Raj Prakash, 2024EB02289. The full walkthrough, with real output and screenshots, is in
+Raj Prakash, 24BCS10328. The full walkthrough, with real output and screenshots, is in
 the session write-up: [`../README.md`](../README.md).
 
 This creates one private S3 bucket the way provider v4+ expects. The bucket's settings
@@ -10,7 +10,7 @@ are separate resources, not arguments of `aws_s3_bucket`. It also uploads one ob
 |---|---|
 | `provider.tf` | `terraform {}` block (Terraform `>= 1.6.0`, `hashicorp/aws ~> 6.0`) and the `aws` provider, with `default_tags` applied to every resource |
 | `variables.tf` | Inputs. `environment` and `bucket_name` have `validation` rules |
-| `terraform.tfvars` | Values used for the run (region `ap-south-1`, bucket `rajprakash-2024eb02289-s18-demo`) |
+| `terraform.tfvars` | Values used for the run (region `ap-south-1`, bucket `rajprakash-24BCS10328-s18-demo`) |
 | `main.tf` | `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_server_side_encryption_configuration` (AES256), `aws_s3_bucket_public_access_block` (all four on), and `aws_s3_object` `hello.txt` |
 | `outputs.tf` | Bucket name / ARN / region, versioning status, object URI and version ID |
 | `emulator_override.tf` | **Local emulator only.** Dummy credentials and endpoints pointing at moto on `localhost:5050` |

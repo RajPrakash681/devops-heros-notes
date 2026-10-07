@@ -1,7 +1,7 @@
 # Session 19 — Cloud & Terraform in Action — Task
 
 - **Name:** Raj Prakash
-- **Enrollment No:** 2024EB02289
+- **Enrollment No:** 24BCS10328
 
 > **Status:** done
 >
@@ -45,7 +45,7 @@ flowchart TB
                 end
             end
         end
-        s3[("S3 bucket<br/>rajprakash-2024eb02289-s19-assets<br/>Block Public Access: all on")]
+        s3[("S3 bucket<br/>rajprakash-24BCS10328-s19-assets<br/>Block Public Access: all on")]
     end
 
     internet <--> igw
@@ -301,10 +301,10 @@ aws_vpc.main: Creation complete after 0s [id=vpc-6cb7ebc7ea233c4c1]
 aws_internet_gateway.main: Creating...
 aws_subnet.public: Creating...
 aws_security_group.web: Creating...
-aws_s3_bucket.assets: Creation complete after 0s [id=rajprakash-2024eb02289-s19-assets]
+aws_s3_bucket.assets: Creation complete after 0s [id=rajprakash-24BCS10328-s19-assets]
 aws_s3_bucket_public_access_block.assets: Creating...
 aws_internet_gateway.main: Creation complete after 0s [id=igw-ee982d990d8582f91]
-aws_s3_bucket_public_access_block.assets: Creation complete after 0s [id=rajprakash-2024eb02289-s19-assets]
+aws_s3_bucket_public_access_block.assets: Creation complete after 0s [id=rajprakash-24BCS10328-s19-assets]
 aws_route_table.public: Creating...
 aws_security_group.web: Creation complete after 0s [id=sg-e1d89a21b9a52d7b2]
 aws_route_table.public: Creation complete after 0s [id=rtb-a70b6db668f5c7bb5]
@@ -319,7 +319,7 @@ Apply complete! Resources: 9 added, 0 changed, 0 destroyed.
 Outputs:
 
 ami = "ami-0884624fc54d115f3 (al2023-ami-2023.12.20260727.0-kernel-6.1-x86_64)"
-bucket_name = "rajprakash-2024eb02289-s19-assets"
+bucket_name = "rajprakash-24BCS10328-s19-assets"
 instance_id = "i-9a0d957f86d8a74e5"
 instance_public_ip = "54.214.135.230"
 public_subnet_az = "ap-south-1a"
@@ -356,8 +356,8 @@ $ terraform plan -no-color | grep -E '^  # |^Plan:'
 Plan: 0 to add, 1 to change, 0 to destroy.
 
 $ terraform apply -auto-approve -no-color | grep -E 'Modif|Apply complete'
-aws_s3_bucket.assets: Modifying... [id=rajprakash-2024eb02289-s19-assets]
-aws_s3_bucket.assets: Modifications complete after 0s [id=rajprakash-2024eb02289-s19-assets]
+aws_s3_bucket.assets: Modifying... [id=rajprakash-24BCS10328-s19-assets]
+aws_s3_bucket.assets: Modifications complete after 0s [id=rajprakash-24BCS10328-s19-assets]
 Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 
 $ terraform plan -no-color | grep -E '^No changes|^Plan:'
@@ -474,8 +474,8 @@ aws_instance.web = i-9a0d957f86d8a74e5
 aws_internet_gateway.main = igw-ee982d990d8582f91
 aws_route_table.public = rtb-a70b6db668f5c7bb5
 aws_route_table_association.public = rtbassoc-544e32ed45fc5bf29
-aws_s3_bucket.assets = rajprakash-2024eb02289-s19-assets
-aws_s3_bucket_public_access_block.assets = rajprakash-2024eb02289-s19-assets
+aws_s3_bucket.assets = rajprakash-24BCS10328-s19-assets
+aws_s3_bucket_public_access_block.assets = rajprakash-24BCS10328-s19-assets
 aws_security_group.web = sg-e1d89a21b9a52d7b2
 aws_subnet.public = subnet-598ae258154d9aa62
 aws_vpc.main = vpc-6cb7ebc7ea233c4c1
@@ -744,10 +744,10 @@ $ terraform plan -destroy -no-color | grep -E '^Plan:'
 Plan: 0 to add, 0 to change, 9 to destroy.
 
 $ terraform destroy -auto-approve -no-color | grep -E 'Destroying|Destruction complete|Destroy complete'
-aws_s3_bucket_public_access_block.assets: Destroying... [id=rajprakash-2024eb02289-s19-assets]
+aws_s3_bucket_public_access_block.assets: Destroying... [id=rajprakash-24BCS10328-s19-assets]
 aws_instance.web: Destroying... [id=i-76da0f2fbd76aae70]
 aws_s3_bucket_public_access_block.assets: Destruction complete after 0s
-aws_s3_bucket.assets: Destroying... [id=rajprakash-2024eb02289-s19-assets]
+aws_s3_bucket.assets: Destroying... [id=rajprakash-24BCS10328-s19-assets]
 aws_s3_bucket.assets: Destruction complete after 1s
 aws_instance.web: Destruction complete after 11s
 aws_route_table_association.public: Destroying... [id=rtbassoc-68b71550067c7937a]

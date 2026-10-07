@@ -1,7 +1,7 @@
 # Session 18 — Terraform & Infrastructure as Code — Task
 
 - **Name:** Raj Prakash
-- **Enrollment No:** 2024EB02289
+- **Enrollment No:** 24BCS10328
 
 > **Status:** done
 >
@@ -104,7 +104,7 @@ ANSI escape codes even when its output is piped into a file.
 |---|---|
 | [`provider.tf`](terraform-s3-demo/provider.tf) | `terraform {}` block (Terraform `>= 1.6.0`, `hashicorp/aws ~> 6.0`) and the `aws` provider with **`default_tags`** |
 | [`variables.tf`](terraform-s3-demo/variables.tf) | `aws_region`, `project_name`, `environment` (validated: dev/test/prod), `owner`, `bucket_name` (validated against S3 naming rules), `enable_versioning` |
-| [`terraform.tfvars`](terraform-s3-demo/terraform.tfvars) | The values: region `ap-south-1`, bucket `rajprakash-2024eb02289-s18-demo` |
+| [`terraform.tfvars`](terraform-s3-demo/terraform.tfvars) | The values: region `ap-south-1`, bucket `rajprakash-24BCS10328-s18-demo` |
 | [`main.tf`](terraform-s3-demo/main.tf) | The bucket plus four separate resources (see below) |
 | [`outputs.tf`](terraform-s3-demo/outputs.tf) | Bucket name, ARN, region, versioning status, object URI and object version ID |
 | [`emulator_override.tf`](terraform-s3-demo/emulator_override.tf) | Emulator only: dummy credentials and endpoints. Delete for real AWS |
@@ -252,7 +252,7 @@ $ terraform plan -no-color | grep -E '^  # |^Plan:|^  \+ [a-z_]+ += '
   # aws_s3_object.hello will be created
 Plan: 5 to add, 0 to change, 0 to destroy.
   + bucket_arn        = (known after apply)
-  + bucket_name       = "rajprakash-2024eb02289-s18-demo"
+  + bucket_name       = "rajprakash-24BCS10328-s18-demo"
   + bucket_region     = "ap-south-1"
   + object_uri        = (known after apply)
   + object_version_id = (known after apply)
@@ -263,12 +263,12 @@ And the tag lines from the second view (`sed -n '/^  # aws_s3_bucket.demo /,/web
 
 ```text
       + tags                        = {
-          + "Name" = "rajprakash-2024eb02289-s18-demo"
+          + "Name" = "rajprakash-24BCS10328-s18-demo"
         }
       + tags_all                    = {
           + "Environment" = "dev"
           + "ManagedBy"   = "Terraform"
-          + "Name"        = "rajprakash-2024eb02289-s18-demo"
+          + "Name"        = "rajprakash-24BCS10328-s18-demo"
           + "Owner"       = "Raj Prakash"
           + "Project"     = "session18-s3-demo"
         }
@@ -294,24 +294,24 @@ same as above.
 ```text
 $ terraform apply -auto-approve -no-color | sed -n '/: Creating\.\.\./,$p'
 aws_s3_bucket.demo: Creating...
-aws_s3_bucket.demo: Creation complete after 0s [id=rajprakash-2024eb02289-s18-demo]
+aws_s3_bucket.demo: Creation complete after 0s [id=rajprakash-24BCS10328-s18-demo]
 aws_s3_bucket_public_access_block.demo: Creating...
 aws_s3_bucket_versioning.demo: Creating...
 aws_s3_bucket_server_side_encryption_configuration.demo: Creating...
-aws_s3_bucket_public_access_block.demo: Creation complete after 0s [id=rajprakash-2024eb02289-s18-demo]
-aws_s3_bucket_server_side_encryption_configuration.demo: Creation complete after 0s [id=rajprakash-2024eb02289-s18-demo]
-aws_s3_bucket_versioning.demo: Creation complete after 2s [id=rajprakash-2024eb02289-s18-demo]
+aws_s3_bucket_public_access_block.demo: Creation complete after 0s [id=rajprakash-24BCS10328-s18-demo]
+aws_s3_bucket_server_side_encryption_configuration.demo: Creation complete after 0s [id=rajprakash-24BCS10328-s18-demo]
+aws_s3_bucket_versioning.demo: Creation complete after 2s [id=rajprakash-24BCS10328-s18-demo]
 aws_s3_object.hello: Creating...
-aws_s3_object.hello: Creation complete after 0s [id=rajprakash-2024eb02289-s18-demo/hello.txt]
+aws_s3_object.hello: Creation complete after 0s [id=rajprakash-24BCS10328-s18-demo/hello.txt]
 
 Apply complete! Resources: 5 added, 0 changed, 0 destroyed.
 
 Outputs:
 
-bucket_arn = "arn:aws:s3:::rajprakash-2024eb02289-s18-demo"
-bucket_name = "rajprakash-2024eb02289-s18-demo"
+bucket_arn = "arn:aws:s3:::rajprakash-24BCS10328-s18-demo"
+bucket_name = "rajprakash-24BCS10328-s18-demo"
 bucket_region = "ap-south-1"
-object_uri = "s3://rajprakash-2024eb02289-s18-demo/hello.txt"
+object_uri = "s3://rajprakash-24BCS10328-s18-demo/hello.txt"
 object_version_id = "657311db-2af2-4dea-bd73-8db17088a802"
 versioning_status = "Enabled"
 ```
@@ -340,14 +340,14 @@ Terraform will perform the following actions:
 
   # aws_s3_bucket.demo will be updated in-place
   ~ resource "aws_s3_bucket" "demo" {
-        id                          = "rajprakash-2024eb02289-s18-demo"
+        id                          = "rajprakash-24BCS10328-s18-demo"
       ~ tags                        = {
-          + "Name" = "rajprakash-2024eb02289-s18-demo"
+          + "Name" = "rajprakash-24BCS10328-s18-demo"
         }
       ~ tags_all                    = {
           + "Environment" = "dev"
           + "ManagedBy"   = "Terraform"
-          + "Name"        = "rajprakash-2024eb02289-s18-demo"
+          + "Name"        = "rajprakash-24BCS10328-s18-demo"
           + "Owner"       = "Raj Prakash"
           + "Project"     = "session18-s3-demo"
         }
@@ -359,8 +359,8 @@ Terraform will perform the following actions:
 Plan: 0 to add, 1 to change, 0 to destroy.
 
 $ terraform apply -auto-approve -no-color | grep -E 'Modif|Apply complete'
-aws_s3_bucket.demo: Modifying... [id=rajprakash-2024eb02289-s18-demo]
-aws_s3_bucket.demo: Modifications complete after 0s [id=rajprakash-2024eb02289-s18-demo]
+aws_s3_bucket.demo: Modifying... [id=rajprakash-24BCS10328-s18-demo]
+aws_s3_bucket.demo: Modifications complete after 0s [id=rajprakash-24BCS10328-s18-demo]
 Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
 
 $ terraform plan -no-color | grep -E '^No changes|^Plan:'
@@ -388,8 +388,8 @@ is the most interesting one.
 $ terraform show -no-color | sed -n '/^# aws_s3_object.hello:/,/^}/p'
 # aws_s3_object.hello:
 resource "aws_s3_object" "hello" {
-    arn                           = "arn:aws:s3:::rajprakash-2024eb02289-s18-demo/hello.txt"
-    bucket                        = "rajprakash-2024eb02289-s18-demo"
+    arn                           = "arn:aws:s3:::rajprakash-24BCS10328-s18-demo/hello.txt"
+    bucket                        = "rajprakash-24BCS10328-s18-demo"
     ...
     content_type                  = "text/plain"
     etag                          = "6a9e84253c78f67930b73117693d0cb2"
@@ -408,15 +408,15 @@ resource "aws_s3_object" "hello" {
 }
 
 $ terraform output -no-color
-bucket_arn = "arn:aws:s3:::rajprakash-2024eb02289-s18-demo"
-bucket_name = "rajprakash-2024eb02289-s18-demo"
+bucket_arn = "arn:aws:s3:::rajprakash-24BCS10328-s18-demo"
+bucket_name = "rajprakash-24BCS10328-s18-demo"
 bucket_region = "ap-south-1"
-object_uri = "s3://rajprakash-2024eb02289-s18-demo/hello.txt"
+object_uri = "s3://rajprakash-24BCS10328-s18-demo/hello.txt"
 object_version_id = "657311db-2af2-4dea-bd73-8db17088a802"
 versioning_status = "Enabled"
 
 $ terraform output -raw bucket_name
-rajprakash-2024eb02289-s18-demo
+rajprakash-24BCS10328-s18-demo
 ```
 
 (The `...` lines are mine. They stand for the `null` checksum and content fields, which are
@@ -439,9 +439,9 @@ the way the AWS CLI does, so no extra tools were needed.
 
 ```text
 $ curl -s --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test http://localhost:5050/ | xmllint --format - | grep '<Name>'
-      <Name>rajprakash-2024eb02289-s18-demo</Name>
+      <Name>rajprakash-24BCS10328-s18-demo</Name>
 
-$ for q in versioning encryption publicAccessBlock; do curl -s --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test "http://localhost:5050/rajprakash-2024eb02289-s18-demo?$q" | xmllint --format - | sed 1d; done
+$ for q in versioning encryption publicAccessBlock; do curl -s --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test "http://localhost:5050/rajprakash-24BCS10328-s18-demo?$q" | xmllint --format - | sed 1d; done
 <GetBucketVersioningResponse xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Status>Enabled</Status>
 </GetBucketVersioningResponse>
@@ -460,10 +460,10 @@ $ for q in versioning encryption publicAccessBlock; do curl -s --aws-sigv4 aws:a
   <RestrictPublicBuckets>true</RestrictPublicBuckets>
 </PublicAccessBlockConfiguration>
 
-$ curl -s -o /dev/null -w 'anonymous GET hello.txt -> HTTP %{http_code}\n' http://localhost:5050/rajprakash-2024eb02289-s18-demo/hello.txt
+$ curl -s -o /dev/null -w 'anonymous GET hello.txt -> HTTP %{http_code}\n' http://localhost:5050/rajprakash-24BCS10328-s18-demo/hello.txt
 anonymous GET hello.txt -> HTTP 403
 
-$ curl -s -D - --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test http://localhost:5050/rajprakash-2024eb02289-s18-demo/hello.txt | grep -iE '^HTTP|^x-amz-version-id|^x-amz-server-side|^Uploaded'
+$ curl -s -D - --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test http://localhost:5050/rajprakash-24BCS10328-s18-demo/hello.txt | grep -iE '^HTTP|^x-amz-version-id|^x-amz-server-side|^Uploaded'
 HTTP/1.1 200 OK
 x-amz-version-id: 657311db-2af2-4dea-bd73-8db17088a802
 x-amz-server-side-encryption: AES256
@@ -488,11 +488,11 @@ aws_s3_bucket_versioning.demo
 aws_s3_object.hello
 
 $ jq -r '.resources[] | "\(.type).\(.name)  ->  id = \(.instances[0].attributes.id)"' terraform.tfstate
-aws_s3_bucket.demo  ->  id = rajprakash-2024eb02289-s18-demo
-aws_s3_bucket_public_access_block.demo  ->  id = rajprakash-2024eb02289-s18-demo
-aws_s3_bucket_server_side_encryption_configuration.demo  ->  id = rajprakash-2024eb02289-s18-demo
-aws_s3_bucket_versioning.demo  ->  id = rajprakash-2024eb02289-s18-demo
-aws_s3_object.hello  ->  id = rajprakash-2024eb02289-s18-demo/hello.txt
+aws_s3_bucket.demo  ->  id = rajprakash-24BCS10328-s18-demo
+aws_s3_bucket_public_access_block.demo  ->  id = rajprakash-24BCS10328-s18-demo
+aws_s3_bucket_server_side_encryption_configuration.demo  ->  id = rajprakash-24BCS10328-s18-demo
+aws_s3_bucket_versioning.demo  ->  id = rajprakash-24BCS10328-s18-demo
+aws_s3_object.hello  ->  id = rajprakash-24BCS10328-s18-demo/hello.txt
 ```
 
 State is a map from **Terraform addresses** (`aws_s3_bucket_versioning.demo`) to **real-world
@@ -518,15 +518,15 @@ $ terraform plan -destroy -no-color | grep -E '^  # |^Plan:'
 Plan: 0 to add, 0 to change, 5 to destroy.
 
 $ terraform destroy -auto-approve -no-color | grep -E 'Destroying|Destruction complete|Destroy complete'
-aws_s3_bucket_public_access_block.demo: Destroying... [id=rajprakash-2024eb02289-s18-demo]
-aws_s3_object.hello: Destroying... [id=rajprakash-2024eb02289-s18-demo/hello.txt]
+aws_s3_bucket_public_access_block.demo: Destroying... [id=rajprakash-24BCS10328-s18-demo]
+aws_s3_object.hello: Destroying... [id=rajprakash-24BCS10328-s18-demo/hello.txt]
 aws_s3_bucket_public_access_block.demo: Destruction complete after 0s
 aws_s3_object.hello: Destruction complete after 0s
-aws_s3_bucket_versioning.demo: Destroying... [id=rajprakash-2024eb02289-s18-demo]
-aws_s3_bucket_server_side_encryption_configuration.demo: Destroying... [id=rajprakash-2024eb02289-s18-demo]
+aws_s3_bucket_versioning.demo: Destroying... [id=rajprakash-24BCS10328-s18-demo]
+aws_s3_bucket_server_side_encryption_configuration.demo: Destroying... [id=rajprakash-24BCS10328-s18-demo]
 aws_s3_bucket_server_side_encryption_configuration.demo: Destruction complete after 0s
 aws_s3_bucket_versioning.demo: Destruction complete after 0s
-aws_s3_bucket.demo: Destroying... [id=rajprakash-2024eb02289-s18-demo]
+aws_s3_bucket.demo: Destroying... [id=rajprakash-24BCS10328-s18-demo]
 aws_s3_bucket.demo: Destruction complete after 0s
 Destroy complete! Resources: 5 destroyed.
 
@@ -543,8 +543,8 @@ $ curl -s --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test http://localhost:5050/ 
   </Owner>
 </ListAllMyBucketsResult>
 
-$ curl -s -o /dev/null -I -w 'HEAD /rajprakash-2024eb02289-s18-demo -> HTTP %{http_code}\n' --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test http://localhost:5050/rajprakash-2024eb02289-s18-demo
-HEAD /rajprakash-2024eb02289-s18-demo -> HTTP 404
+$ curl -s -o /dev/null -I -w 'HEAD /rajprakash-24BCS10328-s18-demo -> HTTP %{http_code}\n' --aws-sigv4 aws:amz:ap-south-1:s3 -u test:test http://localhost:5050/rajprakash-24BCS10328-s18-demo
+HEAD /rajprakash-24BCS10328-s18-demo -> HTTP 404
 ```
 
 Destroy runs the creation order **backwards**. The object and the public access block go
@@ -594,7 +594,7 @@ three separate resources in `main.tf`.
   Terraform could not know the object should wait for it. That ordering requirement exists
   only in my head unless I write it down as `depends_on`.
 - **State maps addresses to IDs, and the ID is not unique.** Four resources share the ID
-  `rajprakash-2024eb02289-s18-demo`. The thing that tells them apart, the address, exists
+  `rajprakash-24BCS10328-s18-demo`. The thing that tells them apart, the address, exists
   only in the state file. Losing the state means Terraform loses track of what it owns,
   even though every bucket setting is still there in AWS.
 - **`default_tags` is better than repeating tags.** It showed up as `tags_all` on every
