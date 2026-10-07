@@ -1,0 +1,10 @@
+# A second ExternalName, because the one in 04-externalname/ points at a domain
+# that no longer resolves. Pods can now use the in-cluster name `github-api`
+# and CoreDNS answers with a CNAME to api.github.com.
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-api
+spec:
+  type: ExternalName
+  externalName: api.github.com

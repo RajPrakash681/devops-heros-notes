@@ -1,0 +1,17 @@
+# The same LoadBalancer Service, but with a loadBalancerClass that no controller
+# in this cluster implements. MetalLB only handles Services with no class (or
+# its own), so nothing ever assigns this one an address - which is exactly what
+# every LoadBalancer Service looks like on a bare kind/minikube cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service-lb-no-controller
+spec:
+  type: LoadBalancer
+  loadBalancerClass: example.com/no-such-controller
+  selector:
+    app: web-loadbalancer
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
