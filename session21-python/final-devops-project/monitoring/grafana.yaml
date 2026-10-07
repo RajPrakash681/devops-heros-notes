@@ -1,0 +1,88 @@
+# Grafana with the Prometheus datasource and the TaskBoard dashboard provisioned from files.
+# The dashboard JSON lives in monitoring/dashboards/ and goes in as a ConfigMap:
+#   kubectl create configmap grafana-dashboards -n taskboard-monitoring \
+#     --from-file=monitoring/dashboards/taskboard.json
+#   kubectl apply -f monitoring/grafana.yaml
+# Anonymous Viewer + embedding are on so the dashboard can be screenshotted without a
+# login (same as session 20). Lab only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: taskboard-monitoring
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        jsonData: {timeInterval: 10s}
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: taskboard
+        folder: TaskBoard
+        type: file
+        allowUiUpdates: false
+        options: {path: /var/lib/grafana/dashboards}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: taskboard-monitoring
+  labels: {app: grafana}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: grafana}
+  template:
+    metadata:
+      labels: {app: grafana}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.1.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: GF_SECURITY_ADMIN_PASSWORD, value: admin}
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "true"}
+            - {name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer}
+            - {name: GF_SECURITY_ALLOW_EMBEDDING, value: "true"}
+            - {name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /var/lib/grafana/dashboards/taskboard.json}
+            - {name: GF_ANALYTICS_REPORTING_ENABLED, value: "false"}
+            - {name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false"}
+          ports:
+            - {name: http, containerPort: 3000}
+          readinessProbe:
+            httpGet: {path: /api/health, port: http}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 300Mi}
+          volumeMounts:
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/datasources/datasource.yaml, subPath: datasource.yaml}
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml, subPath: dashboards.yaml}
+            - {name: dashboards, mountPath: /var/lib/grafana/dashboards}
+      volumes:
+        - name: provisioning
+          configMap: {name: grafana-provisioning}
+        - name: dashboards
+          configMap: {name: grafana-dashboards}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: taskboard-monitoring
+spec:
+  selector: {app: grafana}
+  ports:
+    - {name: http, port: 3000, targetPort: http}

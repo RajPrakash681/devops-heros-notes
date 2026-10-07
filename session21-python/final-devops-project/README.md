@@ -86,12 +86,14 @@ flowchart LR
     end
 
     ghcr -.->|image pull| k8s
-    tf[Terraform<br/>VPC + EKS] -.->|would host| k8s
-    argo[Argo CD Application<br/>config only] -.->|would sync| k8s
+    tf[Terraform<br/>VPC + EKS<br/>applied on moto only] -.->|would host| k8s
+    gh -->|watches main| argo[Argo CD v3.5.4<br/>auto-sync + selfHeal]
+    argo -->|syncs| k8s
+    prom[Prometheus + Grafana<br/>ns taskboard-monitoring] -->|scrapes /metrics| be
 ```
 
-Dashed lines are parts that exist as code but were not exercised end to end here (section
-[What is not done](#what-is-not-done)).
+The Terraform line is dashed: it was planned and applied against the moto emulator, not a
+real AWS account (section 8). Argo CD and Prometheus ran on the kind cluster (sections 11-12).
 
 ## 3. Technologies used
 
@@ -103,7 +105,9 @@ Dashed lines are parts that exist as code but were not exercised end to end here
 | CI/CD | GitHub Actions, GHCR, kind on the runner, Helm |
 | DevSecOps | Bandit 1.9.4, pip-audit 2.10.1, npm audit, gitleaks 8.30.1, Trivy 0.75.0 (both pinned + checksum verified) |
 | Kubernetes | kind v1.34, ingress-nginx, metrics-server, Helm v3.22 |
-| IaC | Terraform 1.16.5, terraform-aws-modules vpc 5.8.1 / eks 20.37.1, hashicorp/aws 5.100.0 |
+| IaC | Terraform 1.16.5, terraform-aws-modules vpc 5.8.1 / eks 20.37.1, hashicorp/aws 5.100.0, moto 5.2.3 (emulator) |
+| Monitoring | Prometheus v3.5.0, Grafana 12.1.1 (plain manifests), prometheus-fastapi-instrumentator, metrics-server |
+| GitOps | Argo CD v3.5.4 |
 
 ## Project layout
 
@@ -114,11 +118,11 @@ final-devops-project/
 ├── docker/                   backend.Dockerfile, frontend.Dockerfile, docker-compose.yml
 ├── kubernetes/               namespace.yaml
 ├── helm/taskboard/           the chart: ConfigMap, Secret, Deployments, Services, Ingress, HPA, PVC
-├── terraform/                VPC + EKS (course code, made valid), terraform.tfvars.example
+├── terraform/                VPC + EKS (course code, made valid), emulator_override.tf (moto), tfvars example
 ├── .github/workflows/        copy of the pipeline (the one GitHub runs is at the repo root)
 ├── security/                 bandit.yaml, .gitleaks.toml, .trivyignore
-├── monitoring/               Prometheus values (not installed, see section 11)
-├── gitops/                   Argo CD Application + values-gitops.yaml (not applied)
+├── monitoring/               Prometheus + Grafana manifests, dashboard JSON (section 11)
+├── gitops/                   Argo CD Application + values-gitops.yaml (section 12)
 ├── scripts/                  load-test.sh (course)
 └── screenshots/
 ```
@@ -351,9 +355,141 @@ Success! The configuration is valid.
 ```
 
 `terraform.tfvars.example` is committed; a real `terraform.tfvars`, `.terraform/` and state
-are git-ignored. **I did not run `plan`, `apply` or `destroy`.** I have no AWS credentials, and
-I ran out of time before wiring up the moto emulator the way I did in
-[session 19](../../session19-cloud-terraform/task/README.md). See [What is not done](#what-is-not-done).
+are git-ignored.
+
+### plan, apply, state and destroy against moto
+
+I have no AWS account, so I ran the full lifecycle against **moto** (5.2.3.dev,
+`motoserver/moto:latest` in Docker), the same way as in
+[session 19](../../session19-cloud-terraform/task/README.md). **Nothing below touched real
+AWS.** [`terraform/emulator_override.tf`](terraform/emulator_override.tf) is the only
+emulator-specific file: Terraform merges `*_override.tf` into the provider block, adding
+dummy credentials, the `skip_*` flags and endpoints for `ec2`, `sts`, `iam`, `eks`, `kms`,
+`logs`, `ssm` and `autoscaling` at `http://localhost:5050` (5050 because macOS AirPlay owns
+port 5000). Deleting that file points the same code at real AWS.
+
+moto has to be started with `-e MOTO_IAM_LOAD_MANAGED_POLICIES=true`. In my dry run without
+it, every policy attachment in the EKS module failed with `NoSuchEntity: Policy
+arn:aws:iam::aws:policy/AmazonEKSClusterPolicy does not exist or is not attachable`, because
+moto does not know the AWS managed policies unless it is told to load them. I reset moto
+before the recorded run so it started empty. The plan file went to a scratch directory
+outside the repo (`s21.tfplan` below).
+
+![terraform plan and apply](screenshots/11-terraform-plan-apply.png)
+
+```text
+$ docker inspect moto --format '{{range .Config.Env}}{{println .}}{{end}}' | grep MOTO_
+MOTO_IAM_LOAD_MANAGED_POLICIES=true
+
+$ curl -s -X POST localhost:5050/moto-api/reset
+{"status": "ok"}
+$ TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache terraform init -no-color 2>&1 | grep -E 'hashicorp/aws|successfully'
+- Reusing previous version of hashicorp/aws from the dependency lock file
+- Using previously-installed hashicorp/aws v5.100.0
+Terraform has been successfully initialized!
+
+$ TF_IN_AUTOMATION=1 terraform plan -no-color -out=.../s21.tfplan 2>&1 | grep -E '^  # module\.(vpc\.aws_(vpc|subnet|nat_gateway)|eks\.aws_eks_|eks\.module\.eks_manag...
+  # module.eks.aws_eks_access_entry.this["cluster_creator"] will be created
+  # module.eks.aws_eks_access_policy_association.this["cluster_creator_admin"] will be created
+  # module.eks.aws_eks_cluster.this[0] will be created
+  # module.vpc.aws_nat_gateway.this[0] will be created
+  # module.vpc.aws_subnet.private[0] will be created
+  # module.vpc.aws_subnet.private[1] will be created
+  # module.vpc.aws_subnet.public[0] will be created
+  # module.vpc.aws_subnet.public[1] will be created
+  # module.vpc.aws_vpc.this[0] will be created
+  # module.eks.module.eks_managed_node_group["main"].aws_eks_node_group.this[0] will be created
+Plan: 54 to add, 0 to change, 0 to destroy.
+
+$ TF_IN_AUTOMATION=1 terraform apply -no-color .../s21.tfplan 2>&1 | tee .../apply.log | grep ...
+module.vpc.aws_vpc.this[0]: Creation complete after 25s [id=vpc-e674fcf8f2f07bf6f]
+module.vpc.aws_nat_gateway.this[0]: Creation complete after 1s [id=nat-187da34c670d845e9]
+module.eks.aws_eks_cluster.this[0]: Creation complete after 6s [id=taskboard-eks]
+module.eks.module.eks_managed_node_group["main"].aws_eks_node_group.this[0]: Creation complete after 4s [id=taskboard-eks:main-20261007174955229000000013]
+Error: creating EKS Access Entry (taskboard-eks:arn:aws:sts::123456789012:user/moto): operation error EKS: CreateAccessEntry, https response error StatusCode: 404, RequestID: , deserialization failed, failed to decode response body, invalid character '<' looking for beginning of value
+Error: Resource precondition failed
+    │ local.cluster_service_cidr is ""
+
+$ grep -c 'Creation complete' .../apply.log
+51
+```
+
+The whole configuration was planned (54 resources) and applied without `-target`. **51 of
+54 were created**, including the VPC, the 4 subnets, the NAT gateway, the IAM roles, the KMS
+key, the EKS cluster and its managed node group. **The apply did not finish cleanly** (no
+`Apply complete!` line). Three resources were not created, all because of gaps in the
+emulator, not in the code:
+
+| Not created | Why |
+|---|---|
+| `module.eks.aws_eks_access_entry.this["cluster_creator"]` | moto does not implement the EKS access-entry API; `CreateAccessEntry` got a 404 HTML page back (the `invalid character '<'`) |
+| `module.eks.aws_eks_access_policy_association.this["cluster_creator_admin"]` | depends on the access entry, never attempted |
+| `...eks_managed_node_group["main"].module.user_data.null_resource.validate_cluster_service_cidr` | the module's precondition failed: moto's `DescribeCluster` returns no service IPv4 CIDR, so `cluster_service_cidr` is `""` |
+
+On real AWS the first two are ordinary API calls and the CIDR is always returned, so I expect
+all 54 to apply there, but I have not run it.
+
+![terraform state and destroy](screenshots/12-terraform-state-destroy.png)
+
+```text
+$ terraform state list | wc -l
+      63
+
+$ terraform state list | grep -E 'aws_vpc|aws_subnet|aws_nat_gateway|aws_eks_cluster|aws_eks_node_group'
+module.eks.aws_eks_cluster.this[0]
+module.vpc.aws_nat_gateway.this[0]
+module.vpc.aws_subnet.private[0]
+module.vpc.aws_subnet.private[1]
+module.vpc.aws_subnet.public[0]
+module.vpc.aws_subnet.public[1]
+module.vpc.aws_vpc.this[0]
+module.eks.module.eks_managed_node_group["main"].aws_eks_node_group.this[0]
+
+$ terraform output -no-color
+cluster_name = "taskboard-eks"
+vpc_id = "vpc-e674fcf8f2f07bf6f"
+
+$ terraform show -no-color | sed -n '...' | grep -E '^#|^    (id|cidr_block|status|version|endpoint) +='
+# module.eks.aws_eks_cluster.this[0]:
+    endpoint                      = "https://t2YBpiR20NOlwQ41dB6z.fhG.ap-south-1.eks.amazonaws.com/"
+    id                            = "taskboard-eks"
+    status                        = "ACTIVE"
+    version                       = "1.31"
+# module.vpc.aws_vpc.this[0]:
+    cidr_block                           = "10.20.0.0/16"
+    id                                   = "vpc-e674fcf8f2f07bf6f"
+
+$ ../../../session19-cloud-terraform/task/aws-emu.sh ec2 describe-vpcs --filters Name=tag:Name,Values=taskboard-vpc --query 'Vpcs[].[VpcId,CidrBlock]' --output text
+vpc-e674fcf8f2f07bf6f	10.20.0.0/16
+
+$ ../../../session19-cloud-terraform/task/aws-emu.sh ec2 describe-subnets --filters Name=tag:Name,Values=taskboard-vpc-* --query 'Subnets[].[CidrBlock,AvailabilityZone]' --output text | sort
+10.20.1.0/24	ap-south-1a
+10.20.101.0/24	ap-south-1a
+10.20.102.0/24	ap-south-1b
+10.20.2.0/24	ap-south-1b
+
+$ ../../../session19-cloud-terraform/task/aws-emu.sh eks describe-cluster --name taskboard-eks --query 'cluster.[name,status,version]' --output text
+taskboard-eks	ACTIVE	1.31
+
+$ ../../../session19-cloud-terraform/task/aws-emu.sh eks list-nodegroups --cluster-name taskboard-eks --output text
+NODEGROUPS	main-20261007174955229000000013
+
+$ TF_IN_AUTOMATION=1 terraform destroy -no-color -auto-approve 2>&1 | tail -n 1
+Destroy complete! Resources: 51 destroyed.
+
+$ terraform state list | wc -l
+       0
+```
+
+- **State:** 63 entries = the 51 created resources plus data sources.
+- **Outputs:** `cluster_endpoint` is missing, although the cluster in state has an endpoint
+  (`terraform show`). My unconfirmed reading is that in EKS module v20 that output waits on
+  the access entries, which failed.
+- **Independent check:** the AWS CLI (session 19's `aws-emu.sh`, the `amazon/aws-cli` image
+  pointed at moto) sees the same VPC ID, the four subnets in two AZs, the cluster `ACTIVE`
+  on 1.31 and the node group. That is moto's view, not Terraform's.
+- **Destroy** removed all 51; afterwards the state is empty and moto lists no cluster and no
+  `taskboard-vpc`. The moto container, `.terraform/` and the state files were then deleted.
 
 ## 9. CI/CD pipeline
 
@@ -437,7 +573,11 @@ down by package in this write-up; the full table is in the run's job 6 log.
 
 ## 11. Monitoring
 
-Done with what the cluster already has. Prometheus/Grafana were **not** installed (time).
+Two rounds. The first (screenshot 09) used only what the cluster already had: `/metrics`,
+`kubectl top`, the HPA and `kubectl logs`. In the second I installed **Prometheus v3.5.0 and
+Grafana 12.1.1** in namespace `taskboard-monitoring` and ran a real load test.
+
+### First round: metrics-server, `/metrics` and logs
 
 ![monitoring](screenshots/09-monitoring.png)
 
@@ -464,35 +604,341 @@ $ kubectl logs -n taskboard -l app=taskboard-backend --prefix --tail=3
 [pod/taskboard-backend-684cc7cbd7-rlm2s/backend] INFO:     10.244.0.6:35858 - "GET /api/tasks HTTP/1.1" 200 OK
 ```
 
-- **Metrics:** `/metrics` is Prometheus format (prometheus-fastapi-instrumentator). This pod
-  counted **102** of the 200 requests; the other ~98 went to the second replica, which is the
-  Service load-balancing across both pods.
-- **Resource metrics:** `kubectl top` and the HPA read metrics-server. 200 sequential requests
-  are nowhere near the 60% CPU target, so the HPA stayed at 2. I did not run a load test hard
-  enough to make it scale.
-- **Logs:** every log line comes from the `QuietProbes` filter's output: only API requests,
-  no `/health`, `/ready` or `/metrics` noise. The source IP `10.244.0.6` is the ingress-nginx
-  controller, not my Mac.
-- **Ready for Prometheus:** backend pods carry `prometheus.io/scrape|port|path` annotations,
-  which the standard `kubernetes-pods` scrape job of the prometheus-community chart uses.
-  [`monitoring/prometheus-scrape.yaml`](monitoring/prometheus-scrape.yaml) has minimal values
-  for that chart. It was not installed.
+This pod counted **102** of the 200 requests; the other ~98 went to the second replica (the
+Service load-balancing). 200 sequential requests were nowhere near the HPA's 60% CPU target.
+
+### Second round: Prometheus + Grafana
+
+I did not use kube-prometheus-stack: the Docker VM is 8 GB and is shared with two other
+clusters. Plain manifests are enough and show every moving part:
+
+| File | What it is |
+|---|---|
+| [`monitoring/namespace.yaml`](monitoring/namespace.yaml) | namespace `taskboard-monitoring` |
+| [`monitoring/prometheus.yaml`](monitoring/prometheus.yaml) | ServiceAccount + ClusterRole (pods/nodes discovery), scrape config, Deployment, Service |
+| [`monitoring/grafana.yaml`](monitoring/grafana.yaml) | Grafana with the datasource and dashboard provider provisioned from a ConfigMap; anonymous Viewer + embedding (lab only, as in session 20) |
+| [`monitoring/dashboards/taskboard.json`](monitoring/dashboards/taskboard.json) | the dashboard, loaded with `kubectl create configmap grafana-dashboards --from-file=...` |
+
+Prometheus has two scrape jobs. `taskboard-pods` uses Kubernetes pod discovery in namespace
+`taskboard` and keeps only pods with `prometheus.io/scrape: "true"`; port and path come from
+the annotations the chart puts on the backend pods, so a new replica is scraped as soon as it
+exists. `kubelet-cadvisor` scrapes each node's kubelet (`/metrics/cadvisor`) for container CPU
+and memory, filtered to namespace `taskboard`. Prometheus and Grafana were reached with
+`kubectl port-forward` (9091 and 3031 on my Mac).
+
+```bash
+kubectl apply -f monitoring/namespace.yaml -f monitoring/prometheus.yaml
+kubectl create configmap grafana-dashboards -n taskboard-monitoring --from-file=monitoring/dashboards/taskboard.json
+kubectl apply -f monitoring/grafana.yaml
+```
+
+The load: 3 minutes of a loop through the Ingress, each round 5x `GET /api/tasks`,
+`GET /api/tasks/stats`, a `POST /api/tasks` and a `GET /api/tasks/999999` (a deliberate 404,
+so the error-rate query has something to count), all 8 in parallel.
+
+![prometheus promql](screenshots/13-prometheus-promql.png)
+
+```text
+$ curl -s localhost:9091/api/v1/targets | jq -r '.data.activeTargets[] | [.labels.job, (.labels.pod // .labels.node), .health] | @tsv'
+kubelet-cadvisor	devops-heros-control-plane	up
+kubelet-cadvisor	devops-heros-worker	up
+kubelet-cadvisor	devops-heros-worker2	up
+taskboard-pods	taskboard-backend-7776555d4f-4clnn	down
+taskboard-pods	taskboard-backend-7776555d4f-gvfb4	up
+taskboard-pods	taskboard-backend-7776555d4f-tpph9	up
+taskboard-pods	taskboard-backend-7776555d4f-l4bzc	down
+
+# request rate (req/s) by handler and status, last 1m
+$ curl -s localhost:9091/api/v1/query --data-urlencode 'query=sum by (handler,status) (rate(http_requests_total{namespace="taskboard"}[1m]))' | jq ...
+/ready 2xx  0.4 req/s
+/health 2xx  0.2 req/s
+/api/tasks 2xx  42.85 req/s
+/api/tasks/{task_id} 4xx  7.17 req/s
+/api/tasks/stats 2xx  7.19 req/s
+
+# latency from the histogram, all handlers
+$ ... 'query=histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="taskboard"}[1m])))' ...
+p95 latency  192 ms
+$ ... 'query=histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="taskboard"}[1m])))' ...
+p99 latency  438 ms
+
+# error rate = share of 4xx+5xx responses
+$ ... 'query=sum(rate(http_requests_total{namespace="taskboard",status=~"4xx|5xx"}[1m])) / sum(rate(http_requests_total{namespace="taskboard"}[1m]))' ...
+error rate  12.4 %
+$ ... 'query=sum(rate(http_requests_total{namespace="taskboard",status="5xx"}[5m])) or vector(0)' ...
+5xx rate  0 req/s
+```
+
+- **Request rate:** about 58 req/s in total, most of it `/api/tasks` (GET and POST share the
+  handler label). `/health` and `/ready` are the kubelet's probes, which the access log
+  filters out but `/metrics` still counts.
+- **Error rate 12.4 %** is exactly the planted 404s: 1 request in 8 per round. The 5xx rate is
+  0, so the server never failed; "error rate" without splitting 4xx from 5xx would have been
+  misleading here.
+- **Two targets `down`:** those are the two new backend pods the HPA had just created (next
+  screenshot). They were still in their init container (migrations), so nothing listened on
+  8000 yet. Discovery found them before they were ready, which is the expected order.
+
+![pod resources and logs](screenshots/14-pod-resources-logs.png)
+
+```text
+$ ... 'query=sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="taskboard",container!=""}[1m]))' ...
+taskboard-backend-7776555d4f-gvfb4  cpu 250 m
+taskboard-frontend-7bc8655dbc-4c8tj  cpu 1 m
+taskboard-postgres-55ddb78d68-vdkbb  cpu 88 m
+taskboard-backend-7776555d4f-tpph9  cpu 286 m
+taskboard-frontend-7bc8655dbc-5d74p  cpu 1 m
+
+$ ... 'query=sum by (pod) (container_memory_working_set_bytes{namespace="taskboard",container!=""})' ...
+taskboard-backend-7776555d4f-gvfb4  mem 81 Mi
+taskboard-frontend-7bc8655dbc-4c8tj  mem 12 Mi
+taskboard-postgres-55ddb78d68-vdkbb  mem 50 Mi
+taskboard-backend-7776555d4f-tpph9  mem 81 Mi
+taskboard-frontend-7bc8655dbc-5d74p  mem 13 Mi
+taskboard-backend-7776555d4f-4clnn  mem 4 Mi
+
+$ kubectl top pod -n taskboard
+NAME                                  CPU(cores)   MEMORY(bytes)
+taskboard-backend-7776555d4f-gvfb4    407m         81Mi
+taskboard-backend-7776555d4f-tpph9    431m         81Mi
+taskboard-frontend-7bc8655dbc-4c8tj   1m           12Mi
+taskboard-frontend-7bc8655dbc-5d74p   1m           12Mi
+taskboard-postgres-55ddb78d68-vdkbb   111m         49Mi
+
+$ kubectl get hpa -n taskboard
+NAME                REFERENCE                      TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+taskboard-backend   Deployment/taskboard-backend   cpu: 335%/60%   2         5         2          2m23s
+
+$ kubectl logs -n taskboard -l app=taskboard-backend --prefix --tail=3 | cut -c1-150
+[pod/taskboard-backend-7776555d4f-tpph9/backend] INFO:     10.244.0.6:60796 - "GET /api/tasks HTTP/1.1" 200 OK
+[pod/taskboard-backend-7776555d4f-gvfb4/backend] INFO:     10.244.0.6:52822 - "GET /api/tasks/stats HTTP/1.1" 200 OK
+[pod/taskboard-backend-7776555d4f-gvfb4/backend] INFO:     10.244.0.6:52840 - "GET /api/tasks/999999 HTTP/1.1" 404 Not Found
+
+$ kubectl logs -n taskboard -l app=taskboard-backend --tail=2000 | grep -c '404 Not Found'
+500
+```
+
+(The logs output also has four `Defaulted container "backend" out of: backend, migrate (init)`
+lines, one per pod, which I left out above; they are in the screenshot.)
+
+- **CPU/memory:** cAdvisor through Prometheus and metrics-server through `kubectl top` agree
+  on the order of magnitude (they sample different windows: 250-286m vs 407-431m). Each
+  backend pod used about 0.25-0.43 cores against a **request of 100m**, so the HPA's
+  utilisation is several hundred percent.
+- **Logs:** the access log shows the 404s from the load test next to the 200s, with the
+  ingress-nginx controller (`10.244.0.6`) as the client.
+
+### The HPA scaled under this load
+
+The first round never got the HPA above 2 replicas. This one did:
+
+![hpa scale up](screenshots/16-hpa-scale-up.png)
+
+```text
+$ kubectl get hpa -n taskboard
+NAME                REFERENCE                      TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+taskboard-backend   Deployment/taskboard-backend   cpu: 419%/60%   2         5         4          2m43s
+
+$ kubectl get pods -n taskboard -l app=taskboard-backend
+NAME                                 READY   STATUS    RESTARTS   AGE
+taskboard-backend-7776555d4f-4clnn   1/1     Running   0          27s
+taskboard-backend-7776555d4f-9lw8r   0/1     Running   0          11s
+taskboard-backend-7776555d4f-gvfb4   1/1     Running   0          2m28s
+taskboard-backend-7776555d4f-l4bzc   1/1     Running   0          27s
+taskboard-backend-7776555d4f-tpph9   1/1     Running   0          2m43s
+
+$ kubectl describe hpa taskboard-backend -n taskboard | grep -E 'SuccessfulRescale|current replicas'
+  Normal   SuccessfulRescale             2m28s  horizontal-pod-autoscaler  New size: 2; reason: Current number of replicas below Spec.MinReplicas
+  Normal   SuccessfulRescale             27s    horizontal-pod-autoscaler  New size: 4; reason: cpu resource utilization (percentage of request) above target
+  Normal   SuccessfulRescale             11s    horizontal-pod-autoscaler  New size: 5; reason: cpu resource utilization (percentage of request) above target
+
+backend targets up in Prometheus: 4
+```
+
+2 → 4 → 5 (the maximum) in 16 seconds. The fifth pod (`9lw8r`) was still starting, so
+Prometheus had 4 backend targets up at that moment and 5 a little later (dashboard below).
+
+### Grafana dashboard
+
+Provisioned from [`monitoring/dashboards/taskboard.json`](monitoring/dashboards/taskboard.json),
+no clicking: request rate, p95 latency, error rate and backend targets up as stat panels; rate
+by handler/status, p50/p95/p99 latency, and pod CPU and memory as time series.
+
+![grafana dashboard](screenshots/15-grafana-dashboard.png)
+
+Taken at the end of the 3-minute run (`node tools/shoot-web.mjs`, which refuses to shoot
+anything that is not HTTP 200). It shows **5 backend targets up**, the error rate flat at
+about 12 %, and something I did not plan: **latency keeps rising during the run** (p95 about
+426 ms at the end, p99 near 1 s) while the request rate falls. The load test POSTs a task in
+every round and `GET /api/tasks` returns every row with no pagination, so each list request
+got more expensive as the table grew. That is an application finding, not a cluster one:
+the list endpoint needs pagination before real traffic.
 
 ## 12. GitOps
 
 [`gitops/argocd-application.yaml`](gitops/argocd-application.yaml) is an Argo CD `Application`
 that renders this repo's Helm chart from `main` with
-[`gitops/values-gitops.yaml`](gitops/values-gitops.yaml) (image tags pinned to `35788bf`), with
-`automated: {prune: true, selfHeal: true}`. The intended workflow: the pipeline pushes a new
-SHA-tagged image, the tag in `values-gitops.yaml` is bumped in a commit, Argo CD notices the
-new commit and syncs, and any manual change in the cluster is reverted.
+[`gitops/values-gitops.yaml`](gitops/values-gitops.yaml) (GHCR images pinned to `35788bf`,
+`config.appEnv: gitops`), with `automated: {prune: true, selfHeal: true}`.
 
-**This was not run.** Argo CD was not installed in this session and I have no output for it.
-It is configuration only. Two things I would expect to check when it is applied: whether
-Argo CD accepts the `../../gitops/values-gitops.yaml` value file outside the chart directory
-(otherwise a multi-source Application with `ref: values` is needed), and the Secret: Argo CD
-renders the chart from Git, so the dev password in `values.yaml` would be applied from Git as
-well; a real setup would use `postgres.existingSecret` with Sealed Secrets or External Secrets.
+I installed **Argo CD v3.5.4** (same pin as session 20) and scaled the parts I do not use to
+zero to save memory:
+
+```bash
+kubectl create namespace argocd
+kubectl apply --server-side -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/install.yaml
+kubectl -n argocd scale deploy argocd-dex-server argocd-notifications-controller argocd-applicationset-controller --replicas=0
+```
+
+There is no `argocd` CLI on my Mac, so everything below is `kubectl` on the `Application`
+object, whose `status` is what the CLI and the UI display.
+
+### Initial sync
+
+The Helm release from section 11 was removed first, so that Argo CD, not Helm, owns the
+objects in `taskboard`.
+
+![argocd initial sync](screenshots/17-argocd-initial-sync.png)
+
+```text
+$ helm uninstall taskboard -n taskboard --wait   # hand the namespace over to Argo CD
+release "taskboard" uninstalled
+
+$ git ls-remote https://github.com/RajPrakash681/devops-heros-notes.git refs/heads/main
+12e15999c6b6139b59d699f297b4c2368eee03d1	refs/heads/main
+
+$ kubectl apply -f gitops/argocd-application.yaml
+application.argoproj.io/taskboard created
+
+$ kubectl wait applications.argoproj.io/taskboard -n argocd --for=jsonpath='{.status.sync.status}'=Synced --timeout=180s && kubectl wait ... --for=jsonpath='{.status.health.status}'=Healthy --timeout=240s
+application.argoproj.io/taskboard condition met
+application.argoproj.io/taskboard condition met
+
+$ kubectl get applications.argoproj.io taskboard -n argocd -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status,REVISION:.status.sync.revision'
+NAME        SYNC     HEALTH    REVISION
+taskboard   Synced   Healthy   a0e2289aec4cecd9fa2edc3b57810f035e0ede46
+
+$ kubectl get deploy -n taskboard -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,REPLICAS:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image'
+NAME                 READY   REPLICAS   IMAGE
+taskboard-backend    2       2          ghcr.io/rajprakash681/devops-heros-notes/taskboard-backend:35788bf
+taskboard-frontend   2       2          ghcr.io/rajprakash681/devops-heros-notes/taskboard-frontend:35788bf
+taskboard-postgres   1       1          postgres:16-alpine
+
+$ curl -s -H 'Host: taskboard.local' http://localhost/api/info
+{"service":"TaskBoard API","version":"1.1.0","environment":"gitops","git_sha":"35788bf","pod":"taskboard-backend-7cf698bd66-bd5v9"}
+```
+
+- The images came from **GHCR** this time (the packages are public), not from the copies
+  loaded into kind, and `"environment":"gitops"` is the value from `values-gitops.yaml`.
+- The revision is not a mistake to hide: Argo CD **synced `12e1599`**, the `main` SHA that
+  `ls-remote` printed (the app history below has it as entry 0). Between that sync and my
+  `get`, another commit (`a0e2289`, a session 2 write-up) landed on `main`. Argo CD
+  re-compared the app at the new HEAD, found the rendered manifests identical, and stayed
+  `Synced`; `status.sync.revision` is the revision it last *compared* against.
+- The two concerns from my first draft of this section did not materialise: Argo CD accepted
+  the `../../gitops/values-gitops.yaml` value file outside the chart directory (it is still
+  inside the repo), and the chart's Secret was rendered from Git as expected. That second
+  point is still a real problem outside a lab: the dev password is in Git. A real setup would
+  use `postgres.existingSecret` with Sealed Secrets or External Secrets.
+
+### A commit changes the cluster
+
+The change: frontend replicas 2 → 3 in `values-gitops.yaml`, committed and pushed to `main`.
+
+![argocd sync new commit](screenshots/18-argocd-sync-new-commit.png)
+
+```text
+$ git diff gitops/values-gitops.yaml
+-frontend: {tag: "35788bf"}
++frontend: {tag: "35788bf", replicas: 3}
+
+$ git commit -q -m 'Scale the GitOps frontend to 3 replicas' -- gitops/values-gitops.yaml && for i in 1 2 3; do git pull -q --rebase --autostash origin main && git push -q origin main && break; done; git log --oneline -1 HEAD
+Created autostash: 1ccd139
+Applied autostash.
+a1f4740 Scale the GitOps frontend to 3 replicas
+
+$ git ls-remote https://github.com/RajPrakash681/devops-heros-notes.git refs/heads/main
+a1f474056e9f19ce4bbf237248f7ffeb5d25aa78	refs/heads/main
+
+$ kubectl annotate applications.argoproj.io taskboard -n argocd argocd.argoproj.io/refresh=normal --overwrite   # skip the 3-minute poll
+application.argoproj.io/taskboard annotated
+
+$ time kubectl wait applications.argoproj.io/taskboard -n argocd --for=jsonpath='{.status.sync.revision}'=$(git log -1 --format=%H -- gitops/values-gitops.yaml) --timeout=180s
+application.argoproj.io/taskboard condition met
+real	0m6.016s
+
+$ kubectl get applications.argoproj.io taskboard -n argocd -o custom-columns=...
+NAME        SYNC        HEALTH    REVISION
+taskboard   OutOfSync   Healthy   a1f474056e9f19ce4bbf237248f7ffeb5d25aa78
+```
+
+Six seconds after the refresh Argo CD had compared the app against `a1f4740` and found it
+`OutOfSync` (Git says 3 replicas, the cluster has 2). The refresh annotation only skips the
+default 3-minute polling interval; the sync itself was automatic.
+
+![argocd selfheal and history](screenshots/19-argocd-selfheal-history.png)
+
+```text
+$ kubectl wait applications.argoproj.io/taskboard -n argocd --for=jsonpath='{.status.operationState.syncResult.revision}'=a1f474056e9f19ce4bbf237248f7ffeb5d25aa78 --timeout=180s && kubectl wait ... --for=jsonpath='{.status.sync.status}'=Synced --timeout=120s
+application.argoproj.io/taskboard condition met
+application.argoproj.io/taskboard condition met
+
+$ kubectl get applications.argoproj.io taskboard -n argocd -o custom-columns='SYNC:...,HEALTH:...,LAST-SYNC-PHASE:.status.operationState.phase,LAST-SYNCED-REVISION:.status.operationState.syncResult.revision'
+SYNC     HEALTH        LAST-SYNC-PHASE   LAST-SYNCED-REVISION
+Synced   Progressing   Succeeded         a1f474056e9f19ce4bbf237248f7ffeb5d25aa78
+
+$ kubectl get deploy taskboard-frontend -n taskboard
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+taskboard-frontend   2/3     3            2           4m8s
+```
+
+The sync operation's revision is **`a1f4740`, the commit I pushed**, and the frontend
+Deployment now wants 3 replicas (the third pod was starting: `Progressing`).
+
+### Drift is reverted (selfHeal)
+
+```text
+# drift: change the cluster by hand, not through Git
+$ kubectl scale deploy taskboard-frontend -n taskboard --replicas=1 && kubectl get deploy ... -o jsonpath='spec.replicas right after the manual scale: {.spec.replicas}'
+deployment.apps/taskboard-frontend scaled
+spec.replicas right after the manual scale: 1
+
+$ time kubectl wait deploy/taskboard-frontend -n taskboard --for=jsonpath='{.spec.replicas}'=3 --timeout=180s
+deployment.apps/taskboard-frontend condition met
+real	0m2.891s
+
+$ kubectl get deploy taskboard-frontend -n taskboard
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+taskboard-frontend   1/3     3            1           4m11s
+
+$ kubectl get events -n argocd --field-selector involvedObject.name=taskboard --sort-by=.lastTimestamp -o custom-columns='REASON:.reason,MESSAGE:.message' | tail -6
+ResourceUpdated      Updated health status: Healthy -> Progressing
+OperationStarted     Initiated automated sync to 'a1f474056e9f19ce4bbf237248f7ffeb5d25aa78'
+ResourceUpdated      Updated sync status: Synced -> OutOfSync
+ResourceUpdated      Updated health status: Progressing -> Healthy
+OperationCompleted   Partial sync operation to a1f474056e9f19ce4bbf237248f7ffeb5d25aa78 succeeded
+ResourceUpdated      Updated sync status: OutOfSync -> Synced
+
+# app history (what `argocd app history` prints, read from the Application status)
+$ kubectl get applications.argoproj.io taskboard -n argocd -o jsonpath='{range .status.history[*]}{.id}{"  "}{.deployedAt}{"  "}{.revision}{"  automated="}{.initiatedBy.automated}{"\n"}{end}'
+0  2026-10-07T17:46:21Z  12e15999c6b6139b59d699f297b4c2368eee03d1  automated=true
+1  2026-10-07T17:50:04Z  a1f474056e9f19ce4bbf237248f7ffeb5d25aa78  automated=true
+```
+
+- `kubectl scale --replicas=1` took effect (`spec.replicas` 1), and **within 2.9 s** Argo CD
+  had put it back to 3. Two of the three frontend pods had been killed by my scale-down, so
+  for a while `READY` was `1/3` while the replacements started; about 30 s later
+  `kubectl get deploy` showed `3/3` (checked by hand, not in the screenshot). selfHeal restores the *desired state*; it cannot undo the pods that were already
+  terminated.
+- The events show the self-heal as its own automated sync to the same revision: `OutOfSync`,
+  then a **Partial** sync (only the drifted Deployment was re-applied), then `Synced`.
+- `app history` has two entries, both `automated=true`: the initial sync of `12e1599` and the
+  sync of my commit `a1f4740`. The self-heal is not a new entry: it did not deploy a new
+  revision, it re-applied the current one.
+- Pushing `values-gitops.yaml` also triggered the CI pipeline (run `37662097918`, the
+  workflow watches this folder); that run is independent of Argo CD, which only reads Git.
+
+Argo CD was uninstalled and the `argocd` namespace deleted after these captures.
 
 ## 13. Troubleshooting challenge
 
@@ -641,9 +1087,19 @@ taskboard-backend-684cc7cbd7-rlm2s   1/1     Running       0          53s
 | [08-pipeline-green.png](screenshots/08-pipeline-green.png) | `gh run view` of the green run, gate and smoke-test log lines |
 | [09-monitoring.png](screenshots/09-monitoring.png) | `/metrics`, `kubectl top`, HPA, request logs |
 | [10-course-terraform.png](screenshots/10-course-terraform.png) | `terraform init` on the course code ignoring the module version pins |
+| [11-terraform-plan-apply.png](screenshots/11-terraform-plan-apply.png) | moto running + reset, `init`, full `plan` (54), `apply` (51 created, 2 emulator errors) |
+| [12-terraform-state-destroy.png](screenshots/12-terraform-state-destroy.png) | `state list`, `output`, `show`, AWS CLI check against moto, `destroy` (51) |
+| [13-prometheus-promql.png](screenshots/13-prometheus-promql.png) | Prometheus targets; PromQL request rate, p95/p99 latency, error rate under load |
+| [14-pod-resources-logs.png](screenshots/14-pod-resources-logs.png) | pod CPU/memory from cAdvisor, `kubectl top`, HPA, access logs with the 404s |
+| [15-grafana-dashboard.png](screenshots/15-grafana-dashboard.png) | Grafana dashboard provisioned from a file (browser screenshot, HTTP 200) |
+| [16-hpa-scale-up.png](screenshots/16-hpa-scale-up.png) | HPA scaling the backend 2 → 4 → 5 under the load test |
+| [17-argocd-initial-sync.png](screenshots/17-argocd-initial-sync.png) | Argo CD installed, Application applied, initial sync, GHCR images |
+| [18-argocd-sync-new-commit.png](screenshots/18-argocd-sync-new-commit.png) | commit + push of `values-gitops.yaml`, Argo CD comparing against the new SHA |
+| [19-argocd-selfheal-history.png](screenshots/19-argocd-selfheal-history.png) | sync result = pushed SHA, manual scale reverted by selfHeal, app history |
 
-All are terminal captures made with [`tools/capture.py`](../../tools/README.md) and
-`shoot-term.mjs` from real command output. There is no browser screenshot of the UI (time);
+All except 15 are terminal captures made with [`tools/capture.py`](../../tools/README.md) and
+`shoot-term.mjs` from real command output; 15 is `shoot-web.mjs` against Grafana through
+`kubectl port-forward`. There is no browser screenshot of the TaskBoard UI (time);
 `curl ... http://localhost/` returning `<title>TaskBoard</title>` through the Ingress is the
 only evidence of the frontend.
 
@@ -652,14 +1108,16 @@ only evidence of the frontend.
 I had a hard time limit for this session and cut scope. Everything below is missing, not
 hidden:
 
-- **Terraform:** only `init` + `validate`. No `plan`/`apply`/`destroy` (no AWS account, and I
-  did not set up the moto emulator this time). EKS would in any case only be plannable on an
-  emulator.
-- **Prometheus/Grafana:** not installed; metrics shown via `/metrics`, `kubectl top`, HPA.
-- **Argo CD:** Application manifest only, never applied.
+- **Terraform on real AWS:** plan/apply/destroy ran against the moto emulator only (no AWS
+  account). There, 51 of 54 resources applied; the EKS access entry, its policy association
+  and one module precondition failed because moto lacks those APIs (section 8). No real EKS
+  cluster was ever created, and no remote state backend is configured.
+- **Alerting:** Prometheus has no alert rules and there is no Alertmanager. The dashboard
+  shows the problems; nothing would page anyone.
+- **Argo CD in CI:** the pipeline does not bump `values-gitops.yaml` itself; I made that
+  commit by hand. Argo CD ran locally on kind, not on a shared cluster.
 - **Docker Compose:** written, not run.
 - **No browser screenshot** of the app or a GHCR package page.
-- **HPA scale-up** under load not demonstrated.
 - **Troubleshooting attempts that did not work** (see Problems I hit) are not counted among
   the three issues.
 
@@ -677,6 +1135,14 @@ hidden:
   broken revision `deployed`.
 - **`terraform init` is not validation.** It ignored a module version pin it could not parse
   and downloaded the latest major versions.
+- **An emulator tests your code and its own coverage.** moto ran 51 of 54 EKS-module
+  resources; the 3 failures were missing moto APIs, and one needed a moto setting
+  (`MOTO_IAM_LOAD_MANAGED_POLICIES`) before anything IAM-related worked.
+- **A load test finds application problems too.** Latency rose all through the run because
+  `GET /api/tasks` returns the whole table; Prometheus made that visible in minutes.
+- **Argo CD's "revision" depends on which field you read.** `status.sync.revision` is what
+  it last compared against; `operationState.syncResult.revision` and the history are what it
+  actually deployed. On a busy `main` the two differ.
 - **Ask the running app what it is.** `/api/info` with a baked-in git SHA turned "did the
   deploy work?" into a string comparison in the smoke test.
 

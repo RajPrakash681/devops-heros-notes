@@ -1,6 +1,7 @@
-# Argo CD Application for TaskBoard. NOT applied in this submission (see README, GitOps):
-# it is configuration only. Argo CD would render the Helm chart from this repo path,
-# with the image tags pinned in values-gitops.yaml, and keep the cluster equal to Git.
+# Argo CD Application for TaskBoard (applied on the kind cluster, see README, GitOps).
+# Argo CD renders the Helm chart from this repo path with the image tags pinned in
+# values-gitops.yaml, syncs every new commit on main, and reverts manual changes.
+#   kubectl apply -f gitops/argocd-application.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
