@@ -1,0 +1,23 @@
+# Argo CD Application for TaskBoard. NOT applied in this submission (see README, GitOps):
+# it is configuration only. Argo CD would render the Helm chart from this repo path,
+# with the image tags pinned in values-gitops.yaml, and keep the cluster equal to Git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: taskboard
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/RajPrakash681/devops-heros-notes.git
+    targetRevision: main
+    path: session21-python/final-devops-project/helm/taskboard
+    helm:
+      valueFiles:
+        - ../../gitops/values-gitops.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: taskboard
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true]
