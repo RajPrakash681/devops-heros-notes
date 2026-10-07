@@ -1,4 +1,4 @@
-# Session 2 — Linux — Tasks
+# Session 1 & 2 — Linux Fundamentals — Tasks
 
 - **Name:** Raj Prakash
 - **Enrollment No:** 24BCS10328

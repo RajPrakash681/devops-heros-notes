@@ -1,4 +1,4 @@
-# Session 10 — Kubernetes Core Objects — Task
+# Session 10 — Kubernetes Pods, ReplicaSets & Deployments — Task
 
 - **Name:** Raj Prakash
 - **Enrollment No:** 24BCS10328
