@@ -105,20 +105,10 @@ jobs:
           echo "secret is present, length ${#API_TOKEN}"
           echo "echoing it straight to the log prints: $API_TOKEN"
           echo "sha256 fingerprint (safe to show): $(printf %s "$API_TOKEN" | sha256sum | cut -c1-12)"
-      - name: Use the built-in GITHUB_TOKEN secret
-        env:
-          # GitHub creates this secret for every run and revokes it when the job
-          # ends. Its rights come from the workflow's permissions block (contents: read).
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: The built-in GITHUB_TOKEN
         run: |
-          echo "secret is present, length ${#GH_TOKEN}"
-          echo "echoing it straight to the log prints: $GH_TOKEN"
-          echo "sha256 fingerprint (safe to show): $(printf %s "$GH_TOKEN" | sha256sum | cut -c1-12)"
-          echo "authenticated API call with it:"
-          curl -sf -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_REPOSITORY" \
-            | jq -c '{full_name, visibility, default_branch}'
-          echo "API rate limit with the token:    $(curl -sf -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/rate_limit | jq '.resources.core.limit')"
-          echo "API rate limit without the token: $(curl -sf https://api.github.com/rate_limit | jq '.resources.core.limit')"
+          echo "GITHUB_TOKEN is created per run and expires when the job ends."
+          echo "This job's permissions block grants it: contents=read"
 
   build:
     name: Build & smoke-test image
