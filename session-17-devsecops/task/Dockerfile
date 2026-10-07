@@ -6,7 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the app's dependencies, then remove pip itself. Nothing needs pip at
+# runtime, and Trivy found HIGH CVEs in the libraries pip vendors (urllib3,
+# msgpack, setuptools/pkg_resources) - code the app never uses but ships anyway.
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip uninstall -y pip
 
 COPY app ./app
 
