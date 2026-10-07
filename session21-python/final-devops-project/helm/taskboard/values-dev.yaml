@@ -1,0 +1,4 @@
+# Local kind cluster: images built on the laptop and loaded with `kload`.
+backend: {image: taskboard-backend}
+frontend: {image: taskboard-frontend}
+imagePullPolicy: Never

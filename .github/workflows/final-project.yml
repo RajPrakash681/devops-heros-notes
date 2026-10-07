@@ -1,0 +1,256 @@
+# Session 21 - final DevOps project pipeline (TaskBoard: FastAPI + React + PostgreSQL).
+# THIS file (repo root) is the one GitHub runs. session21-python/final-devops-project/
+# .github/workflows/final-project.yml is a copy kept for the deliverable layout; job 1
+# fails if the two ever differ.
+#
+#  1 build & test ─┬─► 2 SAST (Bandit) ───────────┐
+#                  ├─► 3 SCA (pip-audit, npm audit)┤
+#                  ├─► 4 secret scan (gitleaks) ───┼─► 7 SECURITY GATE ─► 8 push GHCR ─► 9 deploy to kind + smoke test
+#                  └─► 5 docker build ─► 6 Trivy ──┘     (if: always())     main only
+name: Session 21 - Final project
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "session21-python/final-devops-project/**"
+      - "!session21-python/final-devops-project/screenshots/**"
+      - "!session21-python/final-devops-project/**.md"
+      - ".github/workflows/final-project.yml"
+  pull_request:
+    paths:
+      - "session21-python/final-devops-project/**"
+      - ".github/workflows/final-project.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: final-project-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_DIR: session21-python/final-devops-project
+  TRIVY_VERSION: "0.75.0"
+  GITLEAKS_VERSION: "8.30.1"
+
+jobs:
+  build-test:
+    name: 1. Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deliverable copy of this workflow is identical
+        run: cmp .github/workflows/final-project.yml "$APP_DIR/.github/workflows/final-project.yml" && echo "copy is identical"
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - name: Backend - install and pytest
+        working-directory: ${{ env.APP_DIR }}/application/backend
+        run: |
+          pip install -q -r requirements-dev.txt
+          python -m pytest -v --cov=app --cov-report=term-missing --junitxml=reports/junit.xml
+      - uses: actions/setup-node@v7
+        with: {node-version: "22"}
+      - name: Frontend - npm ci and build
+        working-directory: ${{ env.APP_DIR }}/application/frontend
+        run: npm ci && npm run build
+      - name: Helm chart - lint and render
+        run: |
+          helm lint "$APP_DIR/helm/taskboard" --set backend.tag=ci,frontend.tag=ci
+          helm template t "$APP_DIR/helm/taskboard" --set backend.tag=ci,frontend.tag=ci | grep -E '^kind:' | sort | uniq -c
+
+  sast:
+    name: 2. SAST (Bandit)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: pip install -q "bandit==1.9.4"
+      - name: Bandit - full report
+        run: bandit -c "$APP_DIR/security/bandit.yaml" -r "$APP_DIR/application/backend/app" --exit-zero
+      - name: Bandit - GATE (medium+ severity, medium+ confidence)
+        run: bandit -c "$APP_DIR/security/bandit.yaml" -r "$APP_DIR/application/backend/app" --severity-level medium --confidence-level medium -q
+
+  sca:
+    name: 3. SCA (pip-audit + npm audit)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: {python-version: "3.12"}
+      - run: pip install -q pip-audit==2.10.1
+      - name: pip-audit - GATE (any known vulnerability in runtime deps)
+        run: pip-audit -r "$APP_DIR/application/backend/requirements.txt" --strict --desc on
+      - uses: actions/setup-node@v7
+        with: {node-version: "22"}
+      - name: npm audit - GATE (high+)
+        working-directory: ${{ env.APP_DIR }}/application/frontend
+        run: npm audit --audit-level=high
+
+  secret-scan:
+    name: 4. Secret scan (gitleaks)
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0}
+      - name: Install gitleaks (pinned, checksum verified)
+        run: |
+          v=$GITLEAKS_VERSION; cd /tmp
+          curl -sSLO "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz"
+          curl -sSLO "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_checksums.txt"
+          grep "gitleaks_${v}_linux_x64.tar.gz" "gitleaks_${v}_checksums.txt" | sha256sum -c -
+          tar xzf "gitleaks_${v}_linux_x64.tar.gz" gitleaks && sudo mv gitleaks /usr/local/bin/
+      - name: Prove the scanner works (a planted token must be caught)
+        run: |
+          tmp=$(mktemp -d)
+          echo "GITHUB_TOKEN=ghp_$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 36)" > "$tmp/settings.env"
+          if gitleaks dir "$tmp" --no-banner --redact; then echo "::error::planted token NOT caught"; exit 1; fi
+          echo "OK - planted token was caught"
+      - name: Working tree + git history - GATE
+        run: |
+          gitleaks dir "$APP_DIR" -c "$APP_DIR/security/.gitleaks.toml" --no-banner --redact -v
+          gitleaks git . -c "$APP_DIR/security/.gitleaks.toml" --no-banner --redact --log-opts="-- $APP_DIR"
+
+  docker-build:
+    name: 5. Docker build (${{ matrix.component }})
+    needs: build-test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build once, save the exact tarball that will be scanned and pushed
+        run: |
+          IMG="ghcr.io/${GITHUB_REPOSITORY,,}/taskboard-${{ matrix.component }}:${GITHUB_SHA::7}"
+          docker build -f "$APP_DIR/docker/${{ matrix.component }}.Dockerfile" \
+            --build-arg GIT_SHA="${GITHUB_SHA::7}" -t "$IMG" "$APP_DIR/application/${{ matrix.component }}"
+          docker image ls "$IMG"
+          docker inspect --format 'user="{{.Config.User}}"' "$IMG"
+          mkdir -p dist && docker save "$IMG" -o dist/image.tar
+          sha256sum dist/image.tar | tee dist/image.sha256
+          echo "$IMG" > dist/image.ref
+      - uses: actions/upload-artifact@v7
+        with: {name: "image-${{ matrix.component }}", path: dist/, retention-days: 3}
+
+  image-scan:
+    name: 6. Trivy (${{ matrix.component }})
+    needs: docker-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    env:
+      TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with: {name: "image-${{ matrix.component }}", path: dist}
+      - run: sha256sum -c dist/image.sha256
+      - name: Install Trivy (pinned, checksum verified)
+        run: |
+          v=$TRIVY_VERSION; cd /tmp
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${v}/trivy_${v}_Linux-64bit.tar.gz"
+          curl -sSLO "https://github.com/aquasecurity/trivy/releases/download/v${v}/trivy_${v}_checksums.txt"
+          grep "trivy_${v}_Linux-64bit.tar.gz" "trivy_${v}_checksums.txt" | sha256sum -c -
+          tar xzf "trivy_${v}_Linux-64bit.tar.gz" trivy && sudo mv trivy /usr/local/bin/
+      - name: Full report (HIGH/CRITICAL, fixed or not)
+        run: trivy image --input dist/image.tar --severity HIGH,CRITICAL --exit-code 0 --quiet
+      - name: Trivy - GATE (fail on fixable HIGH/CRITICAL)
+        run: |
+          trivy image --input dist/image.tar --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile "$APP_DIR/security/.trivyignore" --exit-code 1 --quiet
+
+  security-gate:
+    name: 7. Security gate
+    needs: [build-test, sast, sca, secret-scan, docker-build, image-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate every check
+        run: |
+          fail=0
+          row() { if [ "$2" = "success" ]; then m=PASS; else m=FAIL; fail=1; fi; printf '| %-24s | %-8s | %s |\n' "$1" "$2" "$m"; }
+          {
+            echo "| Check                    | Result   | Gate |"
+            echo "|--------------------------|----------|------|"
+            row "Build & test"            "${{ needs.build-test.result }}"
+            row "SAST (Bandit)"           "${{ needs.sast.result }}"
+            row "SCA (pip/npm audit)"     "${{ needs.sca.result }}"
+            row "Secret scan (gitleaks)"  "${{ needs.secret-scan.result }}"
+            row "Docker build"            "${{ needs.docker-build.result }}"
+            row "Image scan (Trivy)"      "${{ needs.image-scan.result }}"
+          } > summary.md
+          if [ $fail = 0 ]; then echo "GATE OPEN - images may be pushed" >> summary.md; else echo "GATE CLOSED - nothing is pushed" >> summary.md; fi
+          cat summary.md | tee -a "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+  push:
+    name: 8. Push to GHCR (${{ matrix.component }})
+    needs: security-gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write}
+    strategy:
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: actions/download-artifact@v8
+        with: {name: "image-${{ matrix.component }}", path: dist}
+      - run: sha256sum -c dist/image.sha256 && docker load -i dist/image.tar
+      - uses: docker/login-action@v4
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - run: |
+          IMG=$(cat dist/image.ref)
+          docker push "$IMG"
+          docker inspect --format '{{index .RepoDigests 0}}' "$IMG"
+
+  deploy:
+    name: 9. Deploy to kind (Helm) + smoke test
+    needs: push
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: read}
+    steps:
+      - uses: actions/checkout@v7
+      - name: kind cluster with ingress ports
+        run: |
+          cat > /tmp/kind.yaml <<'K'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              labels: {ingress-ready: "true"}
+              extraPortMappings: [{containerPort: 80, hostPort: 80}]
+          K
+      - uses: helm/kind-action@v1
+        with: {cluster_name: ci, config: /tmp/kind.yaml}
+      - name: Install ingress-nginx
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+          kubectl wait -n ingress-nginx --for=condition=ready pod -l app.kubernetes.io/component=controller --timeout=180s
+      - name: Helm deploy (images pulled from GHCR)
+        run: |
+          kubectl create namespace taskboard
+          kubectl -n taskboard create secret docker-registry ghcr-pull --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" --docker-password="${{ secrets.GITHUB_TOKEN }}"
+          helm upgrade --install taskboard "$APP_DIR/helm/taskboard" -n taskboard \
+            --set backend.tag="${GITHUB_SHA::7}" --set frontend.tag="${GITHUB_SHA::7}" \
+            --set backend.image="ghcr.io/${GITHUB_REPOSITORY,,}/taskboard-backend" \
+            --set frontend.image="ghcr.io/${GITHUB_REPOSITORY,,}/taskboard-frontend" \
+            --set "imagePullSecrets[0].name=ghcr-pull" --set config.appEnv=ci --wait --timeout 5m
+          kubectl get pods,svc,ingress,hpa,pvc -n taskboard
+      - name: Smoke test through the Ingress
+        run: |
+          H='Host: taskboard.local'
+          curl -fsS -H "$H" http://localhost/ | grep -o '<title>.*</title>'
+          info=$(curl -fsS -H "$H" http://localhost/api/info); echo "$info"
+          echo "$info" | grep -q "\"git_sha\":\"${GITHUB_SHA::7}\"" && echo "deployed build == this commit"
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -X POST http://localhost/api/tasks \
+            -d '{"title":"smoke test from CI","priority":"HIGH"}'; echo
+          curl -fsS -H "$H" http://localhost/api/tasks/stats; echo

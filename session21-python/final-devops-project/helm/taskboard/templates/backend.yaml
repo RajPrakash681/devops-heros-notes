@@ -1,0 +1,65 @@
+{{- $secret := .Values.postgres.existingSecret | default "taskboard-db" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskboard-backend
+  labels:
+    app: taskboard-backend
+    {{- include "taskboard.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.hpa.enabled }}
+  replicas: {{ .Values.backend.replicas }}
+  {{- end }}
+  selector: {matchLabels: {app: taskboard-backend}}
+  template:
+    metadata:
+      labels: {app: taskboard-backend}
+      annotations:
+        # Roll the pods when config or credentials change (env vars are read only at start).
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.backend.image }}:{{ required "backend.tag is required (use the git SHA)" .Values.backend.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          envFrom: [{configMapRef: {name: taskboard-config}}, {secretRef: {name: {{ $secret }}}}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image }}:{{ .Values.backend.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports: [{name: http, containerPort: 8000}]
+          envFrom: [{configMapRef: {name: taskboard-config}}, {secretRef: {name: {{ $secret }}}}]
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources: {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: taskboard-backend
+  labels:
+    app: taskboard-backend
+    {{- include "taskboard.labels" . | nindent 4 }}
+spec:
+  selector: {app: taskboard-backend}
+  ports: [{name: http, port: 8000, targetPort: http}]

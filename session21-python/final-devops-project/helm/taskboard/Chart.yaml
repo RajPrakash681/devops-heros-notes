@@ -1,0 +1,6 @@
+apiVersion: v2
+name: taskboard
+description: TaskBoard (FastAPI + React + PostgreSQL) - session 21 final DevOps project
+type: application
+version: 2.0.0
+appVersion: "1.1.0"

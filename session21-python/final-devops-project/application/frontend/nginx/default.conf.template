@@ -1,0 +1,27 @@
+server {
+  listen 8080;
+  server_name _;
+  server_tokens off;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location = /healthz {
+    access_log off;
+    return 200 "ok\n";
+  }
+
+  location / {
+    try_files $uri /index.html;
+  }
+
+  # Used by Docker Compose. In Kubernetes the Ingress sends /api straight to the
+  # backend Service, but BACKEND_URL still has to resolve or nginx refuses to start
+  # (that was the course chart's CrashLoopBackOff).
+  location /api/ {
+    proxy_pass ${BACKEND_URL};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+}

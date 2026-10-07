@@ -1,0 +1,3 @@
+# Bandit (SAST). Gate: medium+ severity at medium+ confidence (set in the workflow).
+exclude_dirs:
+  - tests
