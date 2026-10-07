@@ -12,10 +12,16 @@
 
 ## What the task asked
 
-[`../Readme.md`](../Readme.md) gives resource links rather than a written task, so I took the
-scope from them — the Kubernetes Basics tutorial and the cluster **architecture** docs. So
-the task here is: get a real cluster running, find the control-plane components inside it,
-and run a first workload.
+The homework doc lists five steps, with commands, output screenshots and short architecture
+notes as deliverables:
+
+| # | Task | Where |
+|---|---|---|
+| 1 | Install and configure Minikube | [Cluster setup](#cluster-setup) — I used kind instead, and say why |
+| 2 | Verify Kubernetes cluster status | [Cluster setup](#cluster-setup) |
+| 3 | Explore Kubernetes architecture | [Cluster architecture](#cluster-architecture) |
+| 4 | Learn the basic Kubernetes objects and commands | [First workloads](#first-workloads), [Kubernetes Basics](#kubernetes-basics-tutorial--hands-on) |
+| 5 | Perform the Kubernetes Basics tutorial hands-on | [Kubernetes Basics tutorial](#kubernetes-basics-tutorial--hands-on) — all six modules |
 
 The core objects themselves are covered separately in
 [session 10](../../session10-k8s-core-objects/task/).
@@ -203,6 +209,187 @@ possible.
 That IP is also disposable: delete the pod and the replacement gets a different one. Which
 is exactly the problem Services solve, in session 10.
 
+## Kubernetes Basics tutorial — hands-on
+
+The official [Kubernetes Basics](https://kubernetes.io/docs/tutorials/kubernetes-basics/)
+tutorial has six modules. I ran each one with the tutorial's own commands and images, on the
+same kind cluster, in a namespace `s9` (so `kubectl -n s9`).
+
+### Modules 1–2: create a cluster, deploy an app
+
+![Deploy](screenshots/basics-1-2-deploy.png)
+
+```text
+$ kubectl version | head -2; kubectl cluster-info | head -1
+Warning: version difference between client (1.36) and server (1.34) exceeds the supported minor version skew of +/-1
+Client Version: v1.36.1
+Kubernetes control plane is running at https://127.0.0.1:54147
+
+$ kubectl -n s9 create deployment kubernetes-bootcamp --image=gcr.io/google-samples/kubernetes-bootcamp:v1
+deployment.apps/kubernetes-bootcamp created
+
+$ kubectl -n s9 rollout status deployment/kubernetes-bootcamp --timeout=180s; kubectl -n s9 get deployments
+deployment "kubernetes-bootcamp" successfully rolled out
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+kubernetes-bootcamp   1/1     1            1           1s
+
+$ docker manifest inspect -v gcr.io/google-samples/kubernetes-bootcamp:v1 | grep -m1 -A2 '"platform"'
+		"platform": {
+			"architecture": "amd64",
+```
+
+`create deployment` asked the cluster for one replica of the tutorial app; the scheduler picked
+a node and the kubelet there pulled and started it. The last command explains something I
+expected to be a problem: the tutorial image exists **only for amd64**, and my nodes are arm64.
+
+### Module 3: explore the app — pods, nodes, logs, exec
+
+![Explore](screenshots/basics-3-explore.png)
+
+```text
+$ kubectl -n s9 get pods -o wide
+kubernetes-bootcamp-658f6cbd58-87fwn   1/1     Running   0          5s    10.244.1.144   devops-heros-worker
+
+$ kubectl -n s9 describe pod kubernetes-bootcamp-658f6cbd58-87fwn | grep -E '^(Name|Node|Status|IP):|Image:|Port:'
+Name:             kubernetes-bootcamp-658f6cbd58-87fwn
+Node:             devops-heros-worker/172.19.0.3
+Status:           Running
+IP:               10.244.1.144
+    Image:          gcr.io/google-samples/kubernetes-bootcamp:v1
+
+$ kubectl -n s9 logs kubernetes-bootcamp-658f6cbd58-87fwn
+Kubernetes Bootcamp App Started At: 2026-10-07T17:45:19.453Z | Running On:  kubernetes-bootcamp-658f6cbd58-87fwn
+
+$ kubectl -n s9 exec kubernetes-bootcamp-658f6cbd58-87fwn -- env | grep -E 'HOSTNAME|KUBERNETES_SERVICE_HOST'
+HOSTNAME=kubernetes-bootcamp-658f6cbd58-87fwn
+KUBERNETES_SERVICE_HOST=10.96.0.1
+
+$ kubectl -n s9 exec kubernetes-bootcamp-658f6cbd58-87fwn -- uname -m
+x86_64
+
+$ kubectl -n s9 exec kubernetes-bootcamp-658f6cbd58-87fwn -- curl -s http://localhost:8080
+Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-87fwn | v=1
+```
+
+The four tools the tutorial teaches: `get` (what and where), `describe` (details — which node,
+which IP), `logs` (the container's stdout) and `exec` (run a command inside it). `uname -m`
+inside the pod says **`x86_64`** on an arm64 node: Docker Desktop registers QEMU/Rosetta
+emulation with the Linux kernel, so the amd64 image runs, slower, instead of failing with
+`exec format error`. On a plain arm64 Linux server without that, this tutorial image would not
+start. The env vars show Kubernetes injecting the API server's Service address into every pod.
+
+### Module 4: expose the app with a Service, use labels
+
+![Expose](screenshots/basics-4-expose.png)
+
+```text
+$ kubectl -n s9 expose deployment/kubernetes-bootcamp --type=NodePort --port 8080
+service/kubernetes-bootcamp exposed
+$ kubectl -n s9 get services
+NAME                  TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)          AGE
+kubernetes-bootcamp   NodePort   10.96.71.167   <none>        8080:31147/TCP   5s
+
+$ docker exec devops-heros-worker curl -s http://localhost:31147
+Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-87fwn | v=1
+
+$ kubectl -n s9 get pods -l app=kubernetes-bootcamp --show-labels
+kubernetes-bootcamp-658f6cbd58-87fwn   1/1     Running   0          13s   app=kubernetes-bootcamp,pod-template-hash=658f6cbd58
+$ kubectl -n s9 label pods kubernetes-bootcamp-658f6cbd58-87fwn version=v1 && kubectl -n s9 get pods -l version=v1
+pod/kubernetes-bootcamp-658f6cbd58-87fwn labeled
+kubernetes-bootcamp-658f6cbd58-87fwn   1/1     Running   0          13s
+
+$ kubectl -n s9 delete service -l app=kubernetes-bootcamp
+service "kubernetes-bootcamp" deleted from s9 namespace
+$ docker exec devops-heros-worker curl -sS -m 3 http://localhost:31147
+curl: (7) Failed to connect to localhost port 31147 after 0 ms: Couldn't connect to server
+$ kubectl -n s9 exec kubernetes-bootcamp-658f6cbd58-87fwn -- curl -s http://localhost:8080   # the app itself is still running
+Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-87fwn | v=1
+```
+
+`expose` created a NodePort Service (`8080:31147`) whose selector is the Deployment's label
+`app=kubernetes-bootcamp`. Labels are how Kubernetes objects find each other — I added my own
+`version=v1` and selected on it. Deleting the Service (selected by label too) closed the node
+port immediately, while the pod kept serving on its own `localhost:8080`: the Service is only
+the access path, not the app.
+
+### Module 5: scale the app
+
+![Scale](screenshots/basics-5-scale.png)
+
+```text
+$ kubectl -n s9 scale deployments/kubernetes-bootcamp --replicas=4
+deployment.apps/kubernetes-bootcamp scaled
+$ kubectl -n s9 get deployments; kubectl -n s9 get rs
+kubernetes-bootcamp   4/4     4            4           33s
+kubernetes-bootcamp-658f6cbd58   4         4         4       34s
+
+$ kubectl -n s9 get pods -o wide
+kubernetes-bootcamp-658f6cbd58-87fwn   1/1   Running   0   35s   10.244.1.144   devops-heros-worker
+kubernetes-bootcamp-658f6cbd58-hkztr   1/1   Running   0   11s   10.244.2.122   devops-heros-worker2
+kubernetes-bootcamp-658f6cbd58-qsljg   1/1   Running   0   11s   10.244.2.121   devops-heros-worker2
+kubernetes-bootcamp-658f6cbd58-xk5ht   1/1   Running   0   11s   10.244.1.147   devops-heros-worker
+
+$ for i in 1 2 3 4 5 6 7 8; do docker exec devops-heros-worker curl -s http://localhost:<nodePort>; done | sort | uniq -c
+   2 Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-87fwn | v=1
+   2 Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-hkztr | v=1
+   1 Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-qsljg | v=1
+   3 Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-658f6cbd58-xk5ht | v=1
+
+$ kubectl -n s9 scale deployments/kubernetes-bootcamp --replicas=2 && sleep 5 && kubectl -n s9 get pods
+kubernetes-bootcamp-658f6cbd58-87fwn   1/1     Running       0          51s
+kubernetes-bootcamp-658f6cbd58-hkztr   1/1     Terminating   0          27s
+kubernetes-bootcamp-658f6cbd58-qsljg   1/1     Running       0          27s
+kubernetes-bootcamp-658f6cbd58-xk5ht   1/1     Terminating   0          27s
+```
+
+Scaling changed one number on the ReplicaSet (`DESIRED 4`), and the new pods spread over both
+workers. Eight requests through the one Service landed on **all four pods** — the Service load
+balances across whatever pods currently match its selector, with no configuration change.
+Scaling down terminated two pods; the Service simply stopped sending them traffic.
+
+### Module 6: rolling update — and a rollback
+
+![Update](screenshots/basics-6-update.png)
+
+```text
+$ kubectl -n s9 set image deployments/kubernetes-bootcamp kubernetes-bootcamp=docker.io/jocatalin/kubernetes-bootcamp:v2
+deployment.apps/kubernetes-bootcamp image updated
+$ kubectl -n s9 rollout status deployments/kubernetes-bootcamp --timeout=180s
+Waiting for deployment "kubernetes-bootcamp" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "kubernetes-bootcamp" rollout to finish: 1 old replicas are pending termination...
+deployment "kubernetes-bootcamp" successfully rolled out
+$ docker exec devops-heros-worker curl -s http://localhost:<nodePort>
+Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-57cc954bb9-sksd8 | v=2
+
+$ kubectl -n s9 set image deployments/kubernetes-bootcamp kubernetes-bootcamp=gcr.io/google-samples/kubernetes-bootcamp:v10 && sleep 25
+$ kubectl -n s9 get pods
+kubernetes-bootcamp-57cc954bb9-b55zg   1/1     Running            0          40s
+kubernetes-bootcamp-57cc954bb9-sksd8   1/1     Running            0          44s
+kubernetes-bootcamp-677ff875c4-t7m6b   0/1     ImagePullBackOff   0          25s
+$ kubectl -n s9 get events --field-selector reason=Failed -o custom-columns=OBJECT:.involvedObject.name,MESSAGE:.message | tail -2
+kubernetes-bootcamp-677ff875c4-t7m6b   Error: ErrImagePull
+kubernetes-bootcamp-677ff875c4-t7m6b   Error: ImagePullBackOff
+
+$ kubectl -n s9 rollout undo deployments/kubernetes-bootcamp
+deployment.apps/kubernetes-bootcamp rolled back
+deployment "kubernetes-bootcamp" successfully rolled out
+$ kubectl -n s9 describe deployment kubernetes-bootcamp | grep Image:
+    Image:         docker.io/jocatalin/kubernetes-bootcamp:v2
+$ docker exec devops-heros-worker curl -s http://localhost:<nodePort>
+Hello Kubernetes bootcamp! | Running on: kubernetes-bootcamp-57cc954bb9-b55zg | v=2
+```
+
+- **v1 → v2** was a rolling update: a new ReplicaSet (`57cc954bb9`) scaled up while the old one
+  scaled down, and the app answered `v=2` afterwards with no downtime.
+- **v2 → v10** (a tag that does not exist, as in the tutorial) got stuck: one new pod in
+  ImagePullBackOff, while **both v2 pods kept running** — the rollout never removes old pods
+  until new ones are Ready, so the bad release did not take the app down.
+- **`rollout undo`** went back to the previous revision (v2) and removed the broken pod. The app
+  kept answering `v=2` throughout.
+
+(The tutorial's v2 image is `docker.io/jocatalin/kubernetes-bootcamp:v2` — there is no
+`gcr.io/google-samples/kubernetes-bootcamp:v2`; I checked with `docker manifest inspect`.)
+
 ## What I learned
 
 - **The control plane is not special infrastructure — it is pods.** Being able to
@@ -214,6 +401,9 @@ is exactly the problem Services solve, in session 10.
   the phase field is what to read.
 - **`--restart=Never` matters for anything that finishes.** The default `Always` turns a
   successful one-shot command into a crash loop.
+- **The Basics tutorial is the whole Kubernetes loop in six commands**: `create deployment`
+  → `get/describe/logs/exec` → `expose` → `scale` → `set image` → `rollout undo`. Each one changes
+  a desired state and a controller does the work.
 - **Nodes, pods and services live in three different IP ranges** (`172.19.0.x`,
   `10.244.x.x`, and the service CIDR). Keeping them straight is most of what makes cluster
   networking confusing at first.
@@ -226,7 +416,10 @@ is exactly the problem Services solve, in session 10.
   cannot be scheduled onto a node that has no network. `kubectl wait --for=condition=Ready
   nodes --all` is the right way to handle it instead of guessing at a sleep.
 - **My client and server versions do not match** — `kubectl` v1.36.1 against a v1.34.0
-  server. That is within the ±1 minor version skew Kubernetes supports, so it works, but it
-  is worth noticing before it becomes a confusing failure on an older cluster.
+  server. I first thought that was within the supported skew; it is not. kubectl supports
+  **±1 minor version**, and 1.36 vs 1.34 is two — newer kubectl now says so on every
+  `kubectl version`: `Warning: version difference between client (1.36) and server (1.34)
+  exceeds the supported minor version skew of +/-1`. Everything in these sessions worked, but
+  the fix is a kubectl matching the cluster (or a kind node image of v1.35+).
 - **I assumed `hostname` in a pod would give the node.** It gives the pod name. `-o wide` is
   what actually answers "which node is this on".
