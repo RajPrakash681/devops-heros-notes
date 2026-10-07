@@ -38,6 +38,11 @@ YAML
 # ingress-nginx - the Ingress controller for session 12. The kind flavour of
 # the manifest binds host ports 80/443 on the node labelled ingress-ready=true.
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+# The v1.15.1 kind manifest still binds hostPort 80/443 but no longer pins the
+# controller to the ingress-ready node - it can land on a worker, where the
+# host ports are not mapped to the Mac. Pin it back (found in session 12).
+kubectl -n ingress-nginx patch deployment ingress-nginx-controller --type=merge \
+  -p '{"spec":{"template":{"spec":{"nodeSelector":{"ingress-ready":"true","kubernetes.io/os":"linux"}}}}}'
 kubectl -n ingress-nginx wait --for=condition=Ready pod -l app.kubernetes.io/component=controller --timeout=300s
 
 kubectl -n kube-system rollout status deployment/metrics-server --timeout=180s

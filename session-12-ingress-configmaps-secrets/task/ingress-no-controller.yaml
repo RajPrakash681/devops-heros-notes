@@ -1,0 +1,20 @@
+# Same backend as the full demo, but asks for an IngressClass that no
+# controller in this cluster implements - to show that an Ingress on its own
+# does nothing.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orphan-ingress
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: orphan.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: yatri-frontend-service
+                port:
+                  number: 80

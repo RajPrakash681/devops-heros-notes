@@ -1,0 +1,46 @@
+# The database. Its admin password Secret was created correctly
+# (stringData = plain text, Kubernetes does the encoding).
+# Lab-only credentials - real ones never belong in git.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-admin
+type: Opaque
+stringData:
+  POSTGRES_USER: yatri_admin
+  POSTGRES_PASSWORD: mypassword
+  POSTGRES_DB: yatri
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - secretRef:
+                name: postgres-admin
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "yatri_admin", "-d", "yatri"]
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app: postgres}
+  ports:
+    - port: 5432
