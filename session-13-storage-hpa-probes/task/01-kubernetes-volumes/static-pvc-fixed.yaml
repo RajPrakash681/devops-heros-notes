@@ -1,0 +1,16 @@
+# The course PVC (../../02-persistent-storage/pvc.yaml) never binds to the course
+# PV: with no storageClassName, the DefaultStorageClass admission plugin fills in
+# "standard", while the static PV has no class. storageClassName: "" means
+# "no class - bind only to a pre-created PV".
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: student-pvc
+spec:
+  storageClassName: ""
+  volumeName: student-pv
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi

@@ -1,0 +1,19 @@
+# A pod that uses the course's dynamic PVC (../../03-storageclass/pvc.yaml).
+# The "standard" StorageClass is WaitForFirstConsumer, so the PVC stays Pending
+# until a pod like this one is scheduled.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dynamic-demo
+spec:
+  containers:
+    - name: app
+      image: busybox:1.36
+      command: ["sh", "-c", "echo written at $(date) > /data/hello.txt; sleep 36000"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: dynamic-pvc
