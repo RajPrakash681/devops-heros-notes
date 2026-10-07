@@ -1,0 +1,232 @@
+# Session 16 - CI/CD with GitHub Actions.
+# Source: session-16-github-actions/task/  Write-up: session-16-github-actions/task/README.md
+#
+#   lint ─► test (matrix: 3 OS x Python) ─┐
+#   secrets-demo ─────────────────────────┼─► build (docker image + smoke test, artifact)
+#                                         │        │
+#                          CI ends here ──┘        ▼   (main branch only)
+#                                         deliver (push the *same* image to GHCR)
+#                                                  ▼
+#                                         deploy (kind cluster on the runner, rollout, smoke test)
+name: Session 16 - CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "session-16-github-actions/task/**"
+      - ".github/workflows/session16-cicd.yml"
+  pull_request:
+    paths:
+      - "session-16-github-actions/task/**"
+      - ".github/workflows/session16-cicd.yml"
+  workflow_dispatch:
+
+# Least privilege by default; jobs that need more ask for it.
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the run that is still going.
+concurrency:
+  group: session16-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_DIR: session-16-github-actions/task
+
+jobs:
+  lint:
+    name: Lint (flake8)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: session-16-github-actions/task
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install flake8==7.3.0
+      - run: flake8 app tests
+
+  test:
+    name: Test (${{ matrix.os }}, py${{ matrix.python }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.13"
+    defaults:
+      run:
+        shell: bash
+        working-directory: session-16-github-actions/task
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: session-16-github-actions/task/requirements-dev.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        run: |
+          python -m pytest -v \
+            --junitxml=test-results/junit.xml \
+            --cov=app --cov-report=term-missing --cov-report=xml:test-results/coverage.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}-py${{ matrix.python }}
+          path: ${{ env.APP_DIR }}/test-results/
+          retention-days: 7
+
+  secrets-demo:
+    name: Secrets demo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Use a repository secret
+        env:
+          # Set once with: gh secret set DEMO_API_TOKEN
+          API_TOKEN: ${{ secrets.DEMO_API_TOKEN }}
+        run: |
+          if [ -z "$API_TOKEN" ]; then
+            echo "::warning::DEMO_API_TOKEN is not set (secrets are not passed to forks)."
+            exit 0
+          fi
+          echo "secret is present, length ${#API_TOKEN}"
+          echo "echoing it straight to the log prints: $API_TOKEN"
+          echo "sha256 fingerprint (safe to show): $(printf %s "$API_TOKEN" | sha256sum | cut -c1-12)"
+      - name: The built-in GITHUB_TOKEN
+        run: |
+          echo "GITHUB_TOKEN is created per run and expires when the job ends."
+          echo "This job's permissions block grants it: contents=read"
+
+  build:
+    name: Build & smoke-test image
+    needs: [test, secrets-demo]
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Image name and tag
+        id: meta
+        run: |
+          # Docker image names must be lowercase; the owner and repo names are not.
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "image=ghcr.io/${repo}/session16-calculator" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ env.APP_DIR }}
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: APP_VERSION=${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=session16
+          cache-to: type=gha,mode=max,scope=session16
+      - name: Smoke test the image
+        run: |
+          IMG=${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          docker run -d --name smoke -p 8000:8000 "$IMG"
+          for i in $(seq 1 20); do curl -fs localhost:8000/health && break; sleep 1; done
+          echo; curl -fs "localhost:8000/calc?a=10&op=multiply&b=5"; echo
+          docker inspect --format 'health={{.State.Health.Status}} user={{.Config.User}}' smoke
+          docker image ls "$IMG"
+      - name: Save image as an artifact
+        run: |
+          IMG=${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          mkdir -p dist
+          docker save "$IMG" | gzip > dist/image.tar.gz
+          {
+            echo "image:   $IMG"
+            echo "commit:  $GITHUB_SHA"
+            echo "run:     $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "built:   $(date -u +%FT%TZ)"
+          } > dist/build-info.txt
+          cat dist/build-info.txt; ls -lh dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: dist/
+          retention-days: 7
+
+  deliver:
+    name: CD - push to GHCR
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: docker-image
+      - name: Load the exact image CI tested
+        run: gunzip -c image.tar.gz | docker load && cat build-info.txt
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push commit tag and latest
+        run: |
+          IMG=${{ needs.build.outputs.image }}
+          TAG=${{ needs.build.outputs.tag }}
+          docker tag "$IMG:$TAG" "$IMG:latest"
+          docker push "$IMG:$TAG"
+          docker push "$IMG:latest"
+
+  deploy:
+    name: CD - deploy to Kubernetes
+    needs: [build, deliver]
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create a kind cluster on the runner
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: staging
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull from GHCR and load into the cluster
+        run: |
+          IMG=${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}
+          docker pull "$IMG"
+          kind load docker-image "$IMG" --name staging
+      - name: Deploy
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          IMG=${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}
+          sed "s|IMAGE_PLACEHOLDER|$IMG|" k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/calculator --timeout=120s
+          kubectl get deploy,pods,svc -l app=calculator -o wide
+          kubectl get svc calculator
+      - name: Smoke test through the Service
+        run: |
+          kubectl port-forward svc/calculator 8080:80 >/dev/null 2>&1 &
+          for i in $(seq 1 20); do curl -fs localhost:8080/health && break; sleep 1; done
+          echo
+          curl -fs "localhost:8080/calc?a=7&op=add&b=35"; echo
+          curl -fs localhost:8080/; echo
